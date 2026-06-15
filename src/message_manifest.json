@@ -1,0 +1,52 @@
+{
+  "scenarios": [
+    {
+      "id": "family_impersonation",
+      "threat_vector_classification": "Family_Impersonation",
+      "sender_identity": {
+        "display_name": "Alex (New Number)",
+        "profile_picture_asset": "assets/avatar_generic.png"
+      },
+      "simulated_timestamp": "Just Now",
+      "initial_hook_message": "Hey, it's me. I'm in a really bad spot — got into an accident and I'm using a friend's phone. I need help fast.",
+      "phase_thresholds": {
+        "rapport_turns": 2,
+        "urgency_turns": 2
+      },
+      "evaluation_rule": "EMOTIONAL_IMPERSONATION_ENGAGEMENT",
+      "sensitive_data_targets": ["phone", "address", "payment"]
+    },
+    {
+      "id": "bank_impersonation",
+      "threat_vector_classification": "Corporate_Security",
+      "sender_identity": {
+        "display_name": "Bank Fraud Alert",
+        "profile_picture_asset": "assets/avatar_bank.png"
+      },
+      "simulated_timestamp": "2 mins ago",
+      "initial_hook_message": "Bank Fraud Alert: An unusual transaction of $1,420.50 was detected on your debit card. Reply immediately if this wasn't you.",
+      "phase_thresholds": {
+        "rapport_turns": 1,
+        "urgency_turns": 2
+      },
+      "evaluation_rule": "CORPORATE_CREDENTIAL_COMPROMISE",
+      "sensitive_data_targets": ["bank_account", "password", "pin", "verification_code"]
+    },
+    {
+      "id": "authority_impersonation",
+      "threat_vector_classification": "Authority_Threat",
+      "sender_identity": {
+        "display_name": "Medicare Notice",
+        "profile_picture_asset": "assets/avatar_gov.png"
+      },
+      "simulated_timestamp": "Just Now",
+      "initial_hook_message": "Medicare Notice: Your health coverage is scheduled to be suspended at midnight tonight. Verify your information to maintain active coverage.",
+      "phase_thresholds": {
+        "rapport_turns": 1,
+        "urgency_turns": 1
+      },
+      "evaluation_rule": "GOVERNMENT_IDENTITY_COMPROMISE",
+      "sensitive_data_targets": ["ssn", "address", "medicare_id"]
+    }
+  ]
+}
