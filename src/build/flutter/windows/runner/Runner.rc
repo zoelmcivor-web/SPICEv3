@@ -92,9 +92,9 @@ BEGIN
             VALUE "CompanyName", "Your Company" "\0"
             VALUE "FileDescription", "spice" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "SPICEv1" "\0"
+            VALUE "InternalName", "SPICEv2" "\0"
             VALUE "LegalCopyright", "Copyright (c) 2026 Your Company" "\0"
-            VALUE "OriginalFilename", "SPICEv1.exe" "\0"
+            VALUE "OriginalFilename", "SPICEv2.exe" "\0"
             VALUE "ProductName", "spice" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END

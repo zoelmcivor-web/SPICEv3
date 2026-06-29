@@ -1,6 +1,6 @@
 [project]
 name = "spice"
-version = "1.0.0"
+version = "2.0.0"
 description = "Software Platform for Investigating Cyber Experiences"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,4 +20,9 @@ permissions = [
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.VIBRATE",
+    "android.permission.POST_NOTIFICATIONS",
 ]
+
+# Splash + theme
+[tool.flet.android.meta_data]
+"com.google.android.gms.version" = "@integer/google_play_services_version"

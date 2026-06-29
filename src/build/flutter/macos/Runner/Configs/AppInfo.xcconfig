@@ -5,7 +5,7 @@
 // 'flutter create' template.
 
 // The application's bundle name on disk.
-PRODUCT_NAME = SPICEv1
+PRODUCT_NAME = SPICEv2
 
 // The application's bundle identifier
 PRODUCT_BUNDLE_IDENTIFIER = edu.vcu.vcoa.spice.spice

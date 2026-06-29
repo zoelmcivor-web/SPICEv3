@@ -1,868 +1,2302 @@
 """
-main.py — SPICE Android App Entry Point (v4)
-
-Flet 0.85.3 padding/margin/border_radius API:
-  ONLY direct class constructors work:
-    ft.Padding(left, top, right, bottom)
-    ft.Margin(left, top, right, bottom)
-    ft.BorderRadius(top_left, top_right, bottom_left, bottom_right)
-  ft.padding.all(), ft.padding.only(), ft.padding.symmetric() ALL fail.
-  ft.border_radius.all() also fails.
+main.py — SPICE v7
+Pixel-perfect Messenger clone with:
+  - Every button interactive with realistic Messenger responses
+  - Notification delivered as bold unread message in chat list (not overlay)
+  - 30-second delayed message arrival from Medicare contact
 """
-
 from __future__ import annotations
-
-import logging
-import os
-import time
+import asyncio, logging, os, random, time
 from typing import Optional
-
 import flet as ft
-
 from path_utils import get_secure_path, get_writable_path
 
+# ── Imports with fallbacks ────────────────────────────────────────────────────
 try:
     from config_loader import config
 except Exception as _e:
-    logging.critical("config_loader failed: %s", _e)
-    class _BareCfg:
-        def get(self, k, d=None): return d
+    logging.critical("config_loader: %s", _e)
+    class _C:
+        def get(self,k,d=None): return d
         def get_active_scenario(self): return None
-        def get_fallback_responses(self, s): return ["Please reply."]
+        def get_contacts(self): return []
+        def get_stories(self): return []
+        def get_active_scam_contact(self): return None
+        def get_fallback_responses(self,s,p=1): return ["Please reply."]
+        def get_system_prompt(self,s,p=1): return ""
         def get_scenarios(self): return []
-        def set(self, k, v): pass
-        def set_active_scenario(self, s): pass
-        def update_scenario_hook(self, s, h): pass
-        def add_scenario(self, s): pass
-    config = _BareCfg()  # type: ignore
+        def set(self,k,v): pass
+        def set_active_scenario(self,s): pass
+        def update_scenario_hook(self,s,h): pass
+        def add_scenario(self,s): pass
+        def update_contact(self,i,u): pass
+        def add_contact(self,c): pass
+    config = _C()
 
 try:
     from participant import profile_exists, load_profile, save_profile
-except Exception as _e:
-    logging.critical("participant module failed: %s", _e)
-    def profile_exists(): return False  # type: ignore
-    def load_profile(): return {}  # type: ignore
-    def save_profile(f, l): return {"participant_id": "UNKNOWN", "first_name": f, "last_name": l}  # type: ignore
+except Exception:
+    def profile_exists(): return False
+    def load_profile(): return {}
+    def save_profile(f,l): return {"participant_id":"UNKNOWN","first_name":f,"last_name":l}
 
 try:
     from telemetry import telemetry, scrub_message
-except Exception as _e:
-    logging.critical("telemetry module failed: %s", _e)
-    class _BareTelemetry:
-        def log(self, **kw): pass
-    telemetry = _BareTelemetry()  # type: ignore
-    def scrub_message(t): return t, None  # type: ignore
+except Exception:
+    class _T:
+        def log(self,**k): pass
+    telemetry = _T()
+    def scrub_message(t): return t, None
 
 try:
     from session import save_session, load_session
-except Exception as _e:
-    logging.critical("session module failed: %s", _e)
-    def save_session(*a, **kw): pass  # type: ignore
-    def load_session(): return None  # type: ignore
+except Exception:
+    def save_session(*a,**k): pass
+    def load_session(): return None
 
 try:
     from ai_engine import ChatEngine
-except Exception as _e:
-    logging.critical("ai_engine module failed: %s", _e)
-    ChatEngine = None  # type: ignore
+except Exception:
+    ChatEngine = None
 
 try:
     from network_queue import enqueue_event, flush_queue, get_queue_depth
-except Exception as _e:
-    logging.critical("network_queue module failed: %s", _e)
-    def enqueue_event(e): pass  # type: ignore
-    async def flush_queue(t): return 0  # type: ignore
-    def get_queue_depth(): return 0  # type: ignore
+except Exception:
+    def enqueue_event(e): pass
+    async def flush_queue(t): return 0
+    def get_queue_depth(): return 0
 
 logging.basicConfig(level=logging.DEBUG,
                     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY","")
 
-ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
+# ── Colors (exact Messenger) ──────────────────────────────────────────────────
+BG        = "#FFFFFF"
+BLUE      = "#0099FF"   # messenger wordmark
+SEND_BLU  = "#0084FF"   # bubbles, buttons
+BUBBLE_IN = "#EBEBEB"
+TXT_DARK  = "#000000"
+TXT_MED   = "#1C1E21"
+TXT_GRAY  = "#8A8D91"
+DIVIDER   = "#E4E6EB"
+INPUT_BG  = "#F0F2F5"
+GREEN     = "#31A24C"
+WHITE     = "#FFFFFF"
 
-FB_BLUE       = "#1877F2"
-FB_DARK       = "#1C1E21"
-FB_BG         = "#F0F2F5"
-FB_WHITE      = "#FFFFFF"
-FB_GRAY       = "#65676B"
-FB_LIGHT_GRAY = "#E4E6EB"
-FB_TEXT       = "#050505"
-FB_MESSENGER  = "#0084FF"
+# ── Layout helpers (Flet 0.85.3 — no .all/.only/.symmetric) ──────────────────
+def P(l=0,r=0,t=0,b=0): return ft.Padding(left=l,top=t,right=r,bottom=b)
+def Pa(v):               return ft.Padding(left=v,top=v,right=v,bottom=v)
+def M(l=0,r=0,t=0,b=0): return ft.Margin(left=l,top=t,right=r,bottom=b)
+def BR(v):               return ft.BorderRadius(top_left=v,top_right=v,
+                                                bottom_left=v,bottom_right=v)
+def BS(l=0,r=0,t=0,b=0,c=DIVIDER):
+    s=ft.BorderSide
+    return ft.Border(left=s(l,c),right=s(r,c),top=s(t,c),bottom=s(b,c))
 
-# ---------------------------------------------------------------------------
-# Padding/Margin/BorderRadius helpers for Flet 0.85.3
-# Only ft.Padding(), ft.Margin(), ft.BorderRadius() constructors work.
-# ---------------------------------------------------------------------------
-def _pad(left=0, right=0, top=0, bottom=0):
-    return ft.Padding(left=left, top=top, right=right, bottom=bottom)
+# ── Global state ──────────────────────────────────────────────────────────────
+_profile:         dict  = {}
+_chat_engine             = None
+_interactions:    int   = 0
+_msg_render_t:    float = 0.0
+_notif_render_t:  float = 0.0
+_admin_taps:      int   = 0
+_route:           str   = "boot"
+_chat_unread:     bool  = True    # True = Medicare visible at top from launch
+_notif_fired:     bool  = False
+_session_store:   dict  = {}      # replaces page.session
+_page_ref                = None   # set in main(), used by deferred tasks
+_notif_log:       list  = []      # log of fired notifications for feed screen
+_notif_fire_time: float = 0.0     # timestamp when notification fired
 
-def _pad_all(v):
-    return ft.Padding(left=v, top=v, right=v, bottom=v)
+def _pid(): return _profile.get("participant_id","UNKNOWN")
 
-def _pad_xy(h=0, v=0):
-    return ft.Padding(left=h, top=v, right=h, bottom=v)
-
-def _mar(left=0, right=0, top=0, bottom=0):
-    return ft.Margin(left=left, top=top, right=right, bottom=bottom)
-
-def _br_all(v):
-    return ft.BorderRadius(top_left=v, top_right=v, bottom_left=v, bottom_right=v)
-
-# ---------------------------------------------------------------------------
-# Global mutable state
-# ---------------------------------------------------------------------------
-_participant_profile: dict = {}
-_chat_engine = None
-_interaction_count: int = 0
-_notification_render_time: float = 0.0
-_message_render_time: float = 0.0
-_admin_tap_count: int = 0
-_font_scale: float = 1.0
-_offline_mode: bool = False
-_app_route: str = "boot"
-
-
-def _pid() -> str:
-    return _participant_profile.get("participant_id", "UNKNOWN")
-
-
-def _active_scenario() -> dict:
+def _scenario():
     s = config.get_active_scenario()
-    if s is None:
-        return {
-            "id": "family_impersonation",
-            "threat_vector_classification": "Family_Impersonation",
-            "sender_identity": {"display_name": "Alex (New Number)",
-                                "profile_picture_asset": ""},
-            "simulated_timestamp": "Just Now",
-            "initial_hook_message": "Hey, it's me. I need your help urgently.",
-            "evaluation_rule": "EMOTIONAL_IMPERSONATION_ENGAGEMENT",
-        }
-    return s
+    return s or {
+        "id":"medicare_authority",
+        "threat_vector_classification":"Authority_Threat",
+        "sender_identity":{"display_name":"Medicare Services",
+                           "initials_fallback":"M","initials_color":"#0057A8"},
+        "hook_message":"Hi, this is Sarah from Medicare Services. I need to speak with you urgently about your coverage — please respond as soon as you can.",
+        "simulation_timing":{"simulated_timestamp":"Just Now"},
+        "phase_thresholds":{"rapport_turns":1,"urgency_turns":1},
+    }
 
+def _make_engine():
+    """Always returns a working engine — uses fallback if ChatEngine unavailable."""
+    if ChatEngine is not None:
+        try:
+            engine = ChatEngine(scenario=_scenario(), participant_id=_pid(),
+                                api_key=ANTHROPIC_API_KEY)
+            return engine
+        except Exception as ex:
+            logger.error("ChatEngine init failed: %s", ex)
+    # Return a minimal fallback engine that delivers hook + fallback replies
+    class _FallbackEngine:
+        def __init__(self):
+            self.history = []
+            self.phase = 1
+            self.turn_count = 0
+        async def send_message(self, text):
+            self.history.append({"role":"user","content":text})
+            self.turn_count += 1
+            sc = _scenario()
+            responses = config.get_fallback_responses(sc.get("id",""), self.phase)
+            import random as _r
+            reply = _r.choice(responses) if responses else "Please reply as soon as possible."
+            self.history.append({"role":"assistant","content":reply})
+            return reply, None
+        def import_state(self, state):
+            self.history = state.get("history", [])
+            self.phase = state.get("phase", 1)
+            self.turn_count = state.get("turn_count", 0)
+    return _FallbackEngine()
 
-def _make_chat_engine():
-    if ChatEngine is None:
-        return None
-    return ChatEngine(scenario=_active_scenario(),
-                      participant_id=_pid(),
-                      api_key=ANTHROPIC_API_KEY)
+# ── Avatar ────────────────────────────────────────────────────────────────────
+def _av(initial:str, size:int, color:str=SEND_BLU, online:bool=False) -> ft.Stack:
+    ds = max(10, size//5)
+    layers = [ft.Container(
+        content=ft.Text(initial.upper()[:1], color=WHITE,
+                        size=size*0.38, weight=ft.FontWeight.BOLD),
+        width=size, height=size, bgcolor=color,
+        border_radius=size//2, alignment=ft.Alignment(0,0))]
+    if online:
+        # Offset inward slightly so dot overlaps avatar border like real Messenger
+        offset = max(2, size//14)
+        layers.append(ft.Container(
+            content=ft.Container(width=ds, height=ds, bgcolor=GREEN,
+                                 border_radius=ds//2,
+                                 border=BS(2,2,2,2,BG)),
+            # Use margin to push dot inward from bottom-right corner
+            margin=ft.Margin(left=size-ds-offset, top=size-ds-offset,
+                             right=0, bottom=0),
+            width=ds, height=ds))
+    return ft.Stack(layers, width=size, height=size)
 
-
-def _scaled(size: int) -> int:
-    return int(size * _font_scale)
-
-
-def _avatar(initial: str = "?", size: int = 40) -> ft.Container:
-    return ft.Container(
-        content=ft.Text(initial.upper(), color=FB_WHITE,
-                        size=_scaled(14), weight=ft.FontWeight.BOLD),
-        width=size, height=size,
-        bgcolor=FB_BLUE,
-        border_radius=size // 2,
-        alignment=ft.Alignment(0, 0),
-    )
-
-
-# ===========================================================================
-# VIEW BUILDERS
-# ===========================================================================
-
-def _error_view(msg: str) -> ft.Column:
-    return ft.Column([
-        ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ft.Colors.ORANGE_700, size=64),
-        ft.Text("Configuration Error", size=22, weight=ft.FontWeight.BOLD, color=FB_DARK),
-        ft.Text("Please contact your research coordinator.",
-                size=16, color=FB_GRAY, text_align=ft.TextAlign.CENTER),
-        ft.Text(msg, size=11, color=FB_GRAY, italic=True,
-                text_align=ft.TextAlign.CENTER, selectable=True),
-    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        alignment=ft.MainAxisAlignment.CENTER, spacing=16, expand=True)
-
-
-def _build_registration(page: ft.Page, on_complete) -> ft.Column:
-    first_f = ft.TextField(
-        label="First Name", text_size=_scaled(16),
-        border_color=FB_BLUE, focused_border_color=FB_BLUE,
-        content_padding=_pad(left=16, right=16, top=14, bottom=14))
-    last_f = ft.TextField(
-        label="Last Name", text_size=_scaled(16),
-        border_color=FB_BLUE, focused_border_color=FB_BLUE,
-        content_padding=_pad(left=16, right=16, top=14, bottom=14))
-    err_lbl = ft.Text("", color=ft.Colors.RED_600, size=_scaled(13))
-
-    def submit(e):
-        if not (first_f.value or "").strip() or not (last_f.value or "").strip():
-            err_lbl.value = "Please enter both first and last name."
-            page.update()
-            return
-        global _participant_profile
-        _participant_profile = save_profile(first_f.value, last_f.value)
-        on_complete()
-
-    return ft.Column([
-        ft.Container(height=60),
-        ft.Icon(ft.Icons.CONNECT_WITHOUT_CONTACT, size=72, color=FB_BLUE),
-        ft.Text("Social Connect+ Assistant", size=_scaled(24),
-                weight=ft.FontWeight.BOLD, color=FB_DARK),
-        ft.Container(
-            content=ft.Text(
-                "Welcome to the 30-day mobile engagement\nand user experience layout evaluation.",
-                size=_scaled(14), color=FB_GRAY, text_align=ft.TextAlign.CENTER),
-            padding=_pad(left=24, right=24)),
-        ft.Container(height=16),
-        ft.Container(
-            content=ft.Column([first_f, last_f, err_lbl], spacing=12),
-            padding=_pad(left=32, right=32)),
-        ft.Container(height=8),
-        ft.ElevatedButton(
-            "Begin Evaluation", on_click=submit,
-            bgcolor=FB_BLUE, color=FB_WHITE,
-            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
-            width=260, height=50),
-    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        alignment=ft.MainAxisAlignment.START, spacing=12,
-        expand=True, scroll=ft.ScrollMode.AUTO)
-
-
-def _build_feed(page: ft.Page, on_notif_click) -> ft.Column:
-    global _notification_render_time, _admin_tap_count
-    _notification_render_time = time.time() * 1000
-
-    scenario    = _active_scenario()
-    sender      = scenario["sender_identity"]["display_name"]
-    hook        = scenario["initial_hook_message"]
-    admin_limit = config.get("admin_gesture_tap_count", 7)
-
-    def logo_tap(e):
-        global _admin_tap_count
-        _admin_tap_count += 1
-        if _admin_tap_count >= admin_limit:
-            _admin_tap_count = 0
-            _go(page, "admin")
-
-    def notif_click(e):
-        latency = time.time() * 1000 - _notification_render_time
-        telemetry.log(participant_id=_pid(),
-                      scenario_type=scenario["threat_vector_classification"],
-                      event_type="Notification_Click",
-                      latency_ms=latency)
-        on_notif_click()
-
-    nav = ft.Container(
+# ── Shared modal / placeholder screens ───────────────────────────────────────
+def _modal(page:ft.Page, title:str, icon, body:str, back_label:str="Back",
+           back_fn=None):
+    """Generic full-screen placeholder matching Messenger's visual style."""
+    page.controls.clear()
+    # Header bar
+    header = ft.Container(
         content=ft.Row([
             ft.GestureDetector(
-                content=ft.Text("facebook", color=FB_BLUE, size=_scaled(24),
-                                weight=ft.FontWeight.BOLD),
-                on_tap=logo_tap),
-            ft.Row([
-                ft.Container(content=ft.Icon(ft.Icons.SEARCH, color=FB_DARK, size=22),
-                             bgcolor=FB_LIGHT_GRAY, border_radius=20, padding=8),
-                ft.Container(content=ft.Icon(ft.Icons.MESSAGE_OUTLINED, color=FB_DARK, size=22),
-                             bgcolor=FB_LIGHT_GRAY, border_radius=20, padding=8,
-                             on_click=notif_click),
-            ], spacing=8),
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-        bgcolor=FB_WHITE,
-        padding=_pad(left=16, right=16, top=44, bottom=10),
-        shadow=ft.BoxShadow(blur_radius=4, color="#22000000", offset=ft.Offset(0, 2)))
+                content=ft.Row([
+                    ft.Icon(ft.Icons.ARROW_BACK, color=SEND_BLU, size=24),
+                    ft.Text(back_label, color=SEND_BLU, size=15),
+                ], spacing=4),
+                on_tap=back_fn or (lambda e: None)),
+            ft.Container(expand=1),
+        ]),
+        padding=P(12,12,44,10), bgcolor=BG,
+        shadow=ft.BoxShadow(blur_radius=2,color="#18000000",offset=ft.Offset(0,1)))
+    # Centered body — use Stack with alignment for true centering
+    body_col = ft.Column([
+        ft.Icon(icon, size=72, color=SEND_BLU),
+        ft.Text(title, size=20, weight=ft.FontWeight.BOLD, color=TXT_MED),
+        ft.Text(body, size=14, color=TXT_GRAY, text_align=ft.TextAlign.CENTER),
+    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        alignment=ft.MainAxisAlignment.CENTER,
+        spacing=12)
+    center = ft.Container(
+        content=body_col,
+        expand=True,
+        alignment=ft.Alignment(0, 0))
+    page.add(ft.Container(
+        content=ft.Column([header, center], spacing=0, expand=True),
+        bgcolor=BG, expand=True))
+    page.update()
 
-    banner = ft.Container(
+# ══════════════════════════════════════════════════════════════════════════════
+# VIEWS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _error_view(msg:str) -> ft.Column:
+    return ft.Column([
+        ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED,color=ft.Colors.ORANGE_700,size=56),
+        ft.Text("Configuration Error",size=20,weight=ft.FontWeight.BOLD),
+        ft.Text("Please contact your research coordinator.",size=14,
+                color=TXT_GRAY,text_align=ft.TextAlign.CENTER),
+        ft.Text(msg,size=10,color=TXT_GRAY,italic=True,
+                text_align=ft.TextAlign.CENTER,selectable=True),
+    ],horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        alignment=ft.MainAxisAlignment.CENTER,spacing=14,expand=True)
+
+# ── Registration ──────────────────────────────────────────────────────────────
+def _build_reg(page:ft.Page, done) -> ft.Column:
+    f1=ft.TextField(label="First Name",text_size=16,
+                    border_color=SEND_BLU,focused_border_color=SEND_BLU,
+                    content_padding=P(16,16,14,14))
+    f2=ft.TextField(label="Last Name",text_size=16,
+                    border_color=SEND_BLU,focused_border_color=SEND_BLU,
+                    content_padding=P(16,16,14,14))
+    err=ft.Text("",color=ft.Colors.RED_600,size=13)
+    def go(e):
+        global _profile
+        if not (f1.value or "").strip() or not (f2.value or "").strip():
+            err.value="Please enter both names."; page.update(); return
+        _profile=save_profile(f1.value,f2.value)
+        done()
+        # Schedule notification for new registrant
+        # Keep _chat_unread=True so Medicare stays bold in inbox
+        # Only reset _notif_fired so the timer can fire fresh
+        global _notif_fired, _chat_engine
+        _notif_fired = False
+        _chat_engine = None
+        if _page_ref:
+            logger.info("New registration — scheduling notification in %ss",
+                        config.get("notification_delay_seconds", 60))
+            _page_ref.run_task(_schedule_notif, _page_ref)
+    return ft.Column([
+        ft.Container(height=60),
+        ft.Icon(ft.Icons.CONNECT_WITHOUT_CONTACT,size=68,color=SEND_BLU),
+        ft.Text("Social Connect+ Assistant",size=22,
+                weight=ft.FontWeight.BOLD,color=TXT_MED),
+        ft.Container(content=ft.Text(
+            "Welcome to the 30-day mobile engagement\nand user experience layout evaluation.",
+            size=14,color=TXT_GRAY,text_align=ft.TextAlign.CENTER),
+            padding=P(24,24)),
+        ft.Container(height=12),
+        ft.Container(content=ft.Column([f1,f2,err],spacing=12),
+                     padding=P(32,32)),
+        ft.Container(height=6),
+        ft.ElevatedButton("Begin Evaluation",on_click=go,
+                          bgcolor=SEND_BLU,color=WHITE,
+                          style=ft.ButtonStyle(
+                              shape=ft.RoundedRectangleBorder(radius=8)),
+                          width=260,height=48),
+    ],horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        alignment=ft.MainAxisAlignment.START,
+        spacing=12,expand=True,scroll=ft.ScrollMode.AUTO)
+
+# ── Chat list ─────────────────────────────────────────────────────────────────
+# Default contacts shown if contacts.json fails to load on Android
+_DEFAULT_CONTACTS = [
+    {"id":"contact_medicare","display_name":"Medicare Services","initials":"M",
+     "initials_color":"#0057A8","is_active_online":True,"list_position":1,
+     "scenario_id":"medicare_authority","preview_override":"MEDICARE NOTICE: Your health coverage...",
+     "timestamp":"Just Now","is_unread":True,"filler_conversation":[]},
+    {"id":"contact_mom","display_name":"Mom","initials":"M",
+     "initials_color":"#E91E8C","is_active_online":True,"list_position":2,
+     "scenario_id":"","preview_override":"You: Sounds good! See you Sunday 😊",
+     "timestamp":"2h","is_unread":False,
+     "filler_conversation":[
+         {"role":"user","content":"Hey mom, are we still on for Sunday?"},
+         {"role":"assistant","content":"Of course! I'm making your favorite. Does 2pm work?"},
+         {"role":"user","content":"Perfect, I'll bring dessert 😊"},
+         {"role":"assistant","content":"Sounds good! See you Sunday 😊"}]},
+    {"id":"contact_sarah","display_name":"Sarah","initials":"S",
+     "initials_color":"#9C27B0","is_active_online":True,"list_position":3,
+     "scenario_id":"","preview_override":"Did you see the game last night?",
+     "timestamp":"5h","is_unread":False,
+     "filler_conversation":[
+         {"role":"assistant","content":"Did you see the game last night? That ending was unbelievable!"},
+         {"role":"user","content":"I know! I couldn't believe it"},
+         {"role":"assistant","content":"We should watch the next one together 🍿"},
+         {"role":"user","content":"Deal! Just let me know when"}]},
+    {"id":"contact_james","display_name":"James","initials":"J",
+     "initials_color":"#2196F3","is_active_online":False,"list_position":4,
+     "scenario_id":"","preview_override":"You: Let me know what you think",
+     "timestamp":"Yesterday","is_unread":False,
+     "filler_conversation":[
+         {"role":"user","content":"Hey James, did you get a chance to look at those photos?"},
+         {"role":"assistant","content":"Just looking now, they look great!"},
+         {"role":"user","content":"Let me know what you think"}]},
+    {"id":"contact_linda","display_name":"Linda","initials":"L",
+     "initials_color":"#4CAF50","is_active_online":True,"list_position":5,
+     "scenario_id":"","preview_override":"Photo","timestamp":"Mon",
+     "is_unread":False,
+     "filler_conversation":[
+         {"role":"assistant","content":"Look what I found at the antique shop! 📷"},
+         {"role":"user","content":"Oh wow that's beautiful!"},
+         {"role":"assistant","content":"The little shop on Main Street, so many treasures"},
+         {"role":"user","content":"I'll check it out this weekend"}]},
+    {"id":"contact_robert","display_name":"Robert","initials":"R",
+     "initials_color":"#FF5722","is_active_online":False,"list_position":6,
+     "scenario_id":"","preview_override":"You: 👍","timestamp":"Sun",
+     "is_unread":False,
+     "filler_conversation":[
+         {"role":"assistant","content":"Hey, did you end up finding a plumber?"},
+         {"role":"user","content":"Yes finally! Guy came yesterday"},
+         {"role":"assistant","content":"Oh great, that was a long time coming"},
+         {"role":"user","content":"👍"}]},
+    {"id":"contact_carol","display_name":"Carol","initials":"C",
+     "initials_color":"#795548","is_active_online":True,"list_position":7,
+     "scenario_id":"","preview_override":"Call me when you get a chance",
+     "timestamp":"Sat","is_unread":False,
+     "filler_conversation":[
+         {"role":"assistant","content":"Hey, call me when you get a chance. Nothing urgent, just want to catch up!"},
+         {"role":"user","content":"Will do, I'll call after dinner tonight"},
+         {"role":"assistant","content":"Perfect, talk to you then!"}]},
+    {"id":"contact_david","display_name":"David","initials":"D",
+     "initials_color":"#607D8B","is_active_online":False,"list_position":8,
+     "scenario_id":"","preview_override":"You: Okay sounds good 👍",
+     "timestamp":"Fri","is_unread":False,
+     "filler_conversation":[
+         {"role":"assistant","content":"Are you coming to the neighborhood meeting Thursday?"},
+         {"role":"user","content":"What time does it start?"},
+         {"role":"assistant","content":"7pm at the community center"},
+         {"role":"user","content":"Okay sounds good 👍"}]},
+]
+
+_DEFAULT_STORIES = [
+    # These are configurable from Admin → Profile → Active Users Row
+    # Researchers can change names, initials, and colors from the admin panel
+    {"name":"Kaylee","initials":"K","color":"#E91E63","is_active":True},
+    {"name":"Laurann","initials":"L","color":"#9C27B0","is_active":True},
+    {"name":"Jeanne","initials":"J","color":"#3F51B5","is_active":True},
+    {"name":"Sharon","initials":"S","color":"#009688","is_active":False},
+    {"name":"Mark","initials":"M","color":"#FF5722","is_active":True},
+    {"name":"Betty","initials":"B","color":"#795548","is_active":False},
+]
+
+
+def _build_list(page:ft.Page, open_scam, open_filler) -> ft.Column:
+    global _notif_render_t, _admin_taps
+    _notif_render_t = time.time()*1000
+
+    # Use config contacts if available, fall back to hardcoded defaults
+    # This ensures the list always shows on Android even if contacts.json
+    # fails to load from the packaged asset path
+    contacts  = config.get_contacts() or _DEFAULT_CONTACTS
+    stories   = config.get_stories()  or _DEFAULT_STORIES
+    # Build scam contact directly from active scenario — never depends on
+    # contacts.json matching correctly. This is the only reliable approach.
+    _active_sc = _scenario()
+    _sc_si     = _active_sc.get("sender_identity", {})
+    _sc_hook   = _active_sc.get("hook_message",
+                                _active_sc.get("initial_hook_message",""))
+    _sc_preview= (_sc_hook[:42] + "…") if len(_sc_hook) > 42 else _sc_hook
+
+    scam_contact_hardcoded = {
+        "id":               "scam_contact_active",
+        "display_name":     _sc_si.get("display_name","Medicare Services"),
+        "initials":         _sc_si.get("initials_fallback",
+                                       _sc_si.get("display_name","M")[:1].upper()),
+        "initials_color":   _sc_si.get("initials_color","#0057A8"),
+        "is_active_online": True,
+        "scenario_id":      _active_sc.get("id","medicare_authority"),
+        "preview_override": _sc_preview,
+        "timestamp":        "Just Now",
+        "is_unread":        True,
+        "filler_conversation": [],
+    }
+    scam_id = "scam_contact_active"
+
+    # Also check contacts.json in case researcher customised it
+    scam_c = config.get_active_scam_contact()
+    if scam_c:
+        # Merge — use contacts.json display name if set, else scenario
+        scam_contact_hardcoded["display_name"] = scam_c.get(
+            "display_name", scam_contact_hardcoded["display_name"])
+        scam_contact_hardcoded["initials"] = scam_c.get(
+            "initials", scam_contact_hardcoded["initials"])
+        scam_contact_hardcoded["initials_color"] = scam_c.get(
+            "initials_color", scam_contact_hardcoded["initials_color"])
+    admin_lim = 5  # fixed at 5 taps — not configurable to prevent accidental changes
+
+    def tap_wordmark(e):
+        global _admin_taps
+        _admin_taps += 1
+        if _admin_taps >= admin_lim:
+            _admin_taps = 0
+            _go(page, "password")
+
+    # ── Header ────────────────────────────────────────────────────────────────
+    header=ft.Container(
+        content=ft.Row([
+            ft.GestureDetector(
+                content=ft.Text("messenger",size=26,
+                                weight=ft.FontWeight.W_800,color=BLUE),
+                on_tap=tap_wordmark),
+            ft.Row([
+                # Compose new message
+                ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Icon(ft.Icons.EDIT_SQUARE,
+                                        color=TXT_MED,size=22),
+                        bgcolor=INPUT_BG,border_radius=20,padding=9),
+                    on_tap=lambda e: _modal(page,"New Message",
+                                            ft.Icons.EDIT_OUTLINED,
+                                            "Search for a person or group to message.",
+                                            back_fn=lambda ev: _go(page,"list"))),
+                # Facebook f icon
+                ft.GestureDetector(
+                    content=ft.Container(
+                        content=ft.Text("f",size=16,
+                                        weight=ft.FontWeight.BOLD,
+                                        color=SEND_BLU),
+                        width=40,height=40,bgcolor=INPUT_BG,
+                        border_radius=20,alignment=ft.Alignment(0,0)),
+                    on_tap=lambda e: _modal(page,"Opening Facebook",
+                                            ft.Icons.FACEBOOK,
+                                            "Switching to the Facebook app...",
+                                            back_fn=lambda ev: _go(page,"list"))),
+            ],spacing=8),
+        ],alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+        bgcolor=BG,padding=P(16,16,44,8))
+
+    # ── Search bar ────────────────────────────────────────────────────────────
+    # Meta AI icon: gradient ring approximated with concentric circles
+    meta_ai_icon = ft.Stack([
+        ft.Container(width=24, height=24,
+                     bgcolor="#A855F7", border_radius=12),
+        ft.Container(width=18, height=18,
+                     bgcolor="#3B82F6", border_radius=9,
+                     margin=ft.Margin(left=3,top=3,right=0,bottom=0)),
+        ft.Container(width=10, height=10,
+                     bgcolor=INPUT_BG, border_radius=5,
+                     margin=ft.Margin(left=7,top=7,right=0,bottom=0)),
+    ], width=24, height=24)
+
+    search=ft.GestureDetector(
         content=ft.Container(
             content=ft.Row([
-                ft.Icon(ft.Icons.MESSAGE, color=FB_MESSENGER, size=28),
-                ft.Column([
-                    ft.Text(sender, weight=ft.FontWeight.BOLD,
-                            size=_scaled(14), color=FB_TEXT),
-                    ft.Text((hook[:55] + "…") if len(hook) > 55 else hook,
-                            size=_scaled(12), color=FB_GRAY, max_lines=1),
-                ], spacing=2, expand=True),
-            ], spacing=12),
-            padding=_pad_all(12), bgcolor=FB_WHITE, border_radius=12,
-            shadow=ft.BoxShadow(blur_radius=8, color="#33000000", offset=ft.Offset(0, 2)),
-            on_click=notif_click),
-        padding=_pad(left=12, right=12, top=6, bottom=6))
+                meta_ai_icon,
+                ft.Text("Ask Meta AI or search",color=TXT_GRAY,size=15),
+            ],spacing=10),
+            bgcolor=INPUT_BG,border_radius=24,
+            padding=P(14,14,11,11),margin=P(14,14,2,10)),
+        on_tap=lambda e: _modal(page,"Search",
+                                ft.Icons.SEARCH,
+                                "Search for people, groups, or messages.",
+                                back_fn=lambda ev: _go(page,"list")))
 
-    # Large rotating pool — picks 5 different posts each time feed loads
-    import random as _random
-    _ALL_POSTS = [
-        ("Community Events",    "Join us this Saturday for the Farmers Market! 🌽", 142, 18),
-        ("Local News",          "Road closure on Main St this weekend due to utility work.", 38, 5),
-        ("Health & Wellness",   "Free flu shots available at the community center this Friday.", 201, 31),
-        ("Neighborhood Watch",  "Friendly reminder to lock your vehicles at night. 🔒", 94, 12),
-        ("Senior Center",       "Bingo night this Thursday! Doors open at 6pm. All welcome. 🎉", 211, 24),
-        ("Community Garden",    "Tomatoes are ready! Stop by the garden on Oak Street to pick some up. 🍅", 87, 9),
-        ("Local Library",       "New large-print book club starting next month. Sign up at the front desk.", 63, 7),
-        ("Meals on Wheels",     "Volunteers needed for Tuesday and Thursday delivery routes this month.", 155, 22),
-        ("Weather Update",      "Temperatures dropping this weekend — stay warm and check on neighbors! 🌨️", 178, 14),
-        ("Parks & Recreation",  "The walking trail at Riverside Park has been repaved. Great time for a stroll!", 99, 11),
-        ("Fire Department",     "Reminder: test your smoke detectors and replace batteries twice a year. 🔥", 320, 41),
-        ("Local Church",        "Annual potluck dinner Sunday after service. Bring a dish to share! 🍽️", 134, 19),
-        ("Animal Shelter",      "Three golden retrievers looking for forever homes this week. Come meet them! 🐶", 412, 67),
-        ("Community Theater",   "Tickets still available for this weekend's production of Oklahoma! 🎭", 76, 8),
-        ("Town Hall",           "Public meeting on proposed park improvements next Tuesday at 7pm.", 45, 6),
-        ("Senior Services",     "Free tax preparation assistance available every Wednesday through April.", 88, 13),
-        ("Health Dept",         "Reminder: Medicare open enrollment ends soon. Call 1-800-MEDICARE for help.", 102, 9),
-        ("Book Club",           "This month we're reading 'The Thursday Murder Club.' New members welcome!", 71, 15),
-        ("Community Pool",      "Senior swim hours extended to 8am-10am daily starting next week. 🏊", 93, 10),
-        ("Neighborhood Assoc",  "Street sweeping scheduled for next Monday morning. Please move vehicles.", 56, 4),
-    ]
-    _random.shuffle(_ALL_POSTS)
-    _selected_posts = _ALL_POSTS[:5]
+    # ── Stories row ───────────────────────────────────────────────────────────
+    def _story(initial,name,color=SEND_BLU,online=False,create=False):
+        if create:
+            av=ft.Container(
+                content=ft.Icon(ft.Icons.ADD,color=SEND_BLU,size=26),
+                width=68,height=68,bgcolor=INPUT_BG,border_radius=34,
+                alignment=ft.Alignment(0,0))
+        else:
+            av=_av(initial,68,color,online)
+        col=ft.Column([av,
+                       ft.Text(name,size=11,color=TXT_MED,
+                               text_align=ft.TextAlign.CENTER,max_lines=1,
+                               overflow=ft.TextOverflow.ELLIPSIS)],
+                      horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                      spacing=4,width=76)
+        def tap_story(e):
+            if create:
+                _modal(page,"Create Story",ft.Icons.ADD_CIRCLE_OUTLINE,
+                       "Add a photo or video to share with friends.",
+                       back_fn=lambda ev: _go(page,"list"))
+            else:
+                _modal(page,f"{name}'s Story",ft.Icons.SLIDESHOW,
+                       f"{name} posted a story.",
+                       back_fn=lambda ev: _go(page,"list"))
+        return ft.GestureDetector(content=col,on_tap=tap_story)
 
-    def _card(author, text, likes, comments):
+    story_items=[_story("","Create story",create=True)]
+    for s in stories:
+        story_items.append(_story(s.get("initials","?"),s.get("name",""),
+                                  color=s.get("color",SEND_BLU),
+                                  online=s.get("is_active",False)))
+    stories_row=ft.Container(
+        content=ft.Row(story_items,scroll=ft.ScrollMode.AUTO,spacing=6),
+        padding=P(14,14,8,12))
+
+    # ── Thread rows ───────────────────────────────────────────────────────────
+    def _thread(contact:dict)->ft.Container:
+        name    = contact.get("display_name","")
+        initial = contact.get("initials",name[:1])
+        color   = contact.get("initials_color",SEND_BLU)
+        online  = contact.get("is_active_online",False)
+        ts      = contact.get("timestamp","")
+        is_scam = contact.get("scenario_id") == _active_sc.get("id","")
+        unread  = is_scam and _chat_unread
+
+        override=contact.get("preview_override","")
+        if override:
+            preview=override
+        else:
+            conv=contact.get("filler_conversation",[])
+            if conv:
+                last=conv[-1]
+                prefix="You: " if last["role"]=="user" else ""
+                preview=prefix+last["content"]
+            else:
+                preview=""
+        preview=(preview[:42]+"…") if len(preview)>42 else preview
+
+        # Update preview/timestamp if notification fired
+        if is_scam and _chat_unread:
+            sc=_scenario()
+            hook=sc.get("hook_message",sc.get("initial_hook_message",""))
+            preview=(hook[:42]+"…") if len(hook)>42 else hook
+            ts="Just Now"
+
+        def handler(e):
+            global _chat_unread
+            lat=time.time()*1000-_notif_render_t
+            if is_scam:
+                telemetry.log(participant_id=_pid(),
+                              scenario_type=_scenario().get("threat_vector_classification",""),
+                              event_type="Notification_Click",latency_ms=lat)
+                _chat_unread=False
+                open_scam()
+            else:
+                _session_store["filler_contact"]=contact
+                open_filler()
+
         return ft.Container(
-            content=ft.Column([
-                ft.Row([_avatar(author[0]), ft.Column([
-                    ft.Text(author, weight=ft.FontWeight.BOLD,
-                            size=_scaled(14), color=FB_TEXT),
-                    ft.Text("Just now", size=_scaled(11), color=FB_GRAY),
-                ], spacing=1)], spacing=10),
-                ft.Text(text, size=_scaled(14), color=FB_TEXT),
-                ft.Divider(height=1, color=FB_LIGHT_GRAY),
-                ft.Row([
-                    ft.TextButton(f"👍 {likes}", style=ft.ButtonStyle(color=FB_GRAY)),
-                    ft.TextButton(f"💬 {comments}", style=ft.ButtonStyle(color=FB_GRAY)),
-                    ft.TextButton("↗ Share", style=ft.ButtonStyle(color=FB_GRAY)),
-                ]),
-            ], spacing=8),
-            bgcolor=FB_WHITE, border_radius=8, padding=_pad_all(14),
-            margin=_mar(top=4, bottom=4))
+            content=ft.Row([
+                _av(initial,56,color,online),
+                ft.Column([
+                    ft.Row([
+                        ft.Text(name,size=16,
+                                weight=ft.FontWeight.W_700 if unread
+                                else ft.FontWeight.W_500,
+                                color=TXT_DARK if unread else TXT_MED,
+                                expand=True,max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS),
+                        ft.Container(width=10,height=10,
+                                     bgcolor=SEND_BLU,border_radius=5,
+                                     visible=unread),
+                    ],vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    ft.Text(f"{preview} · {ts}" if ts else preview,
+                            size=13,
+                            color=TXT_DARK if unread else "#8A8D91",
+                            weight=ft.FontWeight.W_700 if unread
+                            else ft.FontWeight.NORMAL,
+                            max_lines=1,
+                            overflow=ft.TextOverflow.ELLIPSIS),
+                ],spacing=3,expand=True),
+            ],spacing=12,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=P(14,14,10,10),bgcolor=BG,
+            on_click=handler,ink=True)
 
-    feed = ft.ListView(
-        [_card(a, t, l, c) for a, t, l, c in _selected_posts],
-        expand=True, spacing=0,
-        padding=_pad(left=8, right=8, top=4, bottom=4))
+    # Scam contact is ALWAYS at position 0 — built from active scenario above.
+    # Filler contacts come from contacts.json (or defaults).
+    # _chat_unread controls bold/dot styling only.
+    filler_contacts  = [c for c in contacts if not c.get("scenario_id")]
+    display_contacts = [scam_contact_hardcoded] + filler_contacts
 
-    return ft.Column([nav, banner, feed], spacing=0, expand=True)
+    rows=[_thread(c) for c in display_contacts]
+    thread_list=ft.ListView(rows,expand=True,spacing=0)
 
+    # ── Bottom nav ────────────────────────────────────────────────────────────
+    def _tab(icon,icon_on,label,active=False,badge=False,on_tap=None):
+        col=SEND_BLU if active else TXT_GRAY
+        ic_w=ft.Stack([
+            ft.Icon(icon_on if active else icon,color=col,size=26),
+            ft.Container(
+                content=ft.Container(width=8,height=8,
+                                     bgcolor="#FF3B30",border_radius=4),
+                visible=badge,alignment=ft.Alignment(1,-1),
+                width=26,height=26),
+        ]) if badge else ft.Icon(icon_on if active else icon,color=col,size=26)
+        return ft.Container(
+            content=ft.GestureDetector(
+                content=ft.Column([ic_w,
+                                   ft.Text(label,size=10,color=col,
+                                           weight=ft.FontWeight.BOLD if active
+                                           else ft.FontWeight.NORMAL)],
+                                  horizontal_alignment=ft.CrossAxisAlignment.CENTER,spacing=3),
+                on_tap=on_tap or (lambda e: None)),
+            expand=True,
+            padding=P(0,0,8,8),
+            alignment=ft.Alignment(0,0))
 
-def _build_chat(page: ft.Page, on_back) -> ft.Column:
-    global _chat_engine, _interaction_count, _message_render_time
+    bottom=ft.Container(
+        content=ft.Row([
+            _tab(ft.Icons.CHAT_BUBBLE_OUTLINE,ft.Icons.CHAT_BUBBLE,
+                 "Chats",active=True,
+                 on_tap=lambda e: _go(page,"list")),
+            _tab(ft.Icons.PEOPLE_OUTLINE,ft.Icons.PEOPLE,"People",
+                 on_tap=lambda e: _modal(page,"People",
+                                         ft.Icons.PEOPLE,
+                                         "Find friends and start new conversations.",
+                                         back_fn=lambda ev: _go(page,"list"))),
+            _tab(ft.Icons.NOTIFICATIONS_NONE,ft.Icons.NOTIFICATIONS,
+                 "Notifications",badge=_chat_unread,
+                 on_tap=lambda e: _go(page,"notifications")),
+            _tab(ft.Icons.MENU,ft.Icons.MENU,"Menu",
+                 on_tap=lambda e: _modal(page,"Menu",
+                                         ft.Icons.MENU,
+                                         "Account settings, privacy, and more.",
+                                         back_fn=lambda ev: _go(page,"list"))),
+        ],spacing=0),
+        bgcolor=BG,
+        border=ft.Border(top=ft.BorderSide(1,"#D0D0D0")),
+        padding=P(0,0,0,20))
 
-    scenario = _active_scenario()
-    sender   = scenario["sender_identity"]["display_name"]
+    return ft.Column([
+        header,search,
+        ft.Divider(height=1,color=DIVIDER),
+        stories_row,
+        ft.Divider(height=1,color=DIVIDER),
+        thread_list,bottom,
+    ],spacing=0,expand=True)
 
-    # Create engine if needed
+# ── Filler chat ───────────────────────────────────────────────────────────────
+def _build_filler(page:ft.Page, back) -> ft.Container:
+    contact = _session_store.get("filler_contact") or {}
+    name    = contact.get("display_name","Contact")
+    initial = contact.get("initials",name[:1])
+    color   = contact.get("initials_color",SEND_BLU)
+    online  = contact.get("is_active_online",False)
+    conv    = contact.get("filler_conversation",[])
+
+    def _make_bbl(text,user):
+        bub=ft.Container(
+            content=ft.Text(text,size=15,
+                            color=WHITE if user else TXT_DARK),
+            bgcolor=SEND_BLU if user else BUBBLE_IN,
+            border_radius=BR(20),padding=P(14,14,10,10))
+        av=_av(initial,28,color)
+        if user:
+            item=ft.Container(
+                content=ft.Column([bub],
+                                  horizontal_alignment=ft.CrossAxisAlignment.END),
+                padding=P(70,0))
+        else:
+            item=ft.Row([av,
+                         ft.Container(
+                             content=ft.Column([bub],
+                                               horizontal_alignment=ft.CrossAxisAlignment.START),
+                             expand=True,padding=P(0,70))],
+                        spacing=6,vertical_alignment=ft.CrossAxisAlignment.END)
+        return ft.Container(content=item,padding=P(0,0,2,2))
+
+    try:
+        from datetime import datetime as _dt
+        ts=_dt.now().strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        ts="Today"
+
+    # Build all controls upfront and pass to ListView constructor
+    msg_controls = [ft.Container(
+        content=ft.Text(ts,size=11,color=TXT_GRAY,
+                        text_align=ft.TextAlign.CENTER),
+        padding=P(0,0,8,8),alignment=ft.Alignment(0,0))]
+    for m in conv:
+        msg_controls.append(_make_bbl(m["content"],user=(m["role"]=="user")))
+
+    msgs=ft.ListView(
+        controls=msg_controls,
+        expand=True,
+        spacing=2,
+        padding=P(8,8,12,8),
+        auto_scroll=True,
+        build_controls_on_demand=False)
+
+    def _call(e):
+        _modal(page,f"Calling {name}...",ft.Icons.PHONE,
+               "Connecting your call. Please wait.",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}), _go(page,"filler")))
+    def _video(e):
+        _modal(page,f"Video call with {name}",ft.Icons.VIDEOCAM,
+               "Starting video call...",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}), _go(page,"filler")))
+
+    header=ft.Container(
+        content=ft.Row([
+            ft.IconButton(ft.Icons.ARROW_BACK,on_click=lambda e: back(),
+                          icon_color=SEND_BLU,icon_size=26),
+            ft.GestureDetector(
+                content=_av(initial,40,color,online),
+                on_tap=lambda e: _modal(page,name,ft.Icons.PERSON,
+                                        f"View {name}'s profile and contact info.",
+                                        back_fn=lambda ev: (_session_store.update(
+                                            {"filler_contact":contact}), _go(page,"filler")))),
+            ft.Column([
+                ft.Text(name,weight=ft.FontWeight.BOLD,size=16,color=TXT_MED),
+                ft.Text("Active now" if online else "Messenger",
+                        size=12,color=TXT_GRAY),
+            ],spacing=0,expand=True),
+            ft.Row([
+                ft.IconButton(ft.Icons.PHONE,icon_color=SEND_BLU,
+                              icon_size=26,on_click=_call),
+                ft.IconButton(ft.Icons.VIDEOCAM,icon_color=SEND_BLU,
+                              icon_size=26,on_click=_video),
+            ],spacing=0),
+        ],spacing=8,vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=BG,padding=P(4,8,44,8),
+        shadow=ft.BoxShadow(blur_radius=2,color="#18000000",
+                            offset=ft.Offset(0,1)))
+
+    def _attach(e):
+        _modal(page,"Attachments",ft.Icons.ATTACH_FILE,
+               "Send photos, files, GIFs, and more.",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}),_go(page,"filler")))
+    def _camera(e):
+        _modal(page,"Camera",ft.Icons.CAMERA_ALT,
+               "Take a photo or video to send.",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}),_go(page,"filler")))
+    def _images(e):
+        _modal(page,"Photo Library",ft.Icons.IMAGE,
+               "Choose a photo from your library to send.",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}),_go(page,"filler")))
+    def _mic(e):
+        _modal(page,"Audio Message",ft.Icons.MIC,
+               "Hold to record an audio message.",
+               back_fn=lambda ev: (_session_store.update(
+                   {"filler_contact":contact}),_go(page,"filler")))
+
+    toolbar=ft.Container(
+        content=ft.Row([
+            ft.IconButton(ft.Icons.ADD_CIRCLE,icon_color=SEND_BLU,
+                          icon_size=28,on_click=_attach),
+            ft.IconButton(ft.Icons.CAMERA_ALT,icon_color=SEND_BLU,
+                          icon_size=28,on_click=_camera),
+            ft.IconButton(ft.Icons.IMAGE,icon_color=SEND_BLU,
+                          icon_size=28,on_click=_images),
+            ft.IconButton(ft.Icons.MIC,icon_color=SEND_BLU,
+                          icon_size=28,on_click=_mic),
+            ft.Container(content=ft.Text("Aa",color=TXT_GRAY,size=15),
+                         bgcolor=INPUT_BG,border_radius=24,expand=True,
+                         padding=P(16,16,10,10)),
+            ft.IconButton(ft.Icons.EMOJI_EMOTIONS,icon_color=SEND_BLU,icon_size=28),
+            ft.Container(
+                content=ft.Icon(ft.Icons.THUMB_UP,color=WHITE,size=20),
+                width=40,height=40,bgcolor=SEND_BLU,border_radius=20,
+                alignment=ft.Alignment(0,0)),
+        ],spacing=2,vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=BG,padding=P(6,8,6,24),
+        shadow=ft.BoxShadow(blur_radius=4,color="#18000000",
+                            offset=ft.Offset(0,-1)))
+
+    return ft.Container(
+        content=ft.Column([header,msgs,toolbar],spacing=0,expand=True),
+        bgcolor=BG,expand=True)
+
+# ── Live scam chat ────────────────────────────────────────────────────────────
+def _build_chat(page:ft.Page, back) -> ft.Container:
+    global _chat_engine,_interactions,_msg_render_t
+
+    sc=_scenario()
+    si=sc.get("sender_identity",{})
+    sender  = si.get("display_name","Medicare Services")
+    initial = si.get("initials_fallback","M")
+    color   = si.get("initials_color","#0057A8")
+
     if _chat_engine is None:
-        _chat_engine = _make_chat_engine()
+        _chat_engine = _make_engine()
+    # _make_engine always returns something now, but guard just in case
     if _chat_engine is None:
-        return _error_view("Chat engine unavailable.")
+        _chat_engine = _make_engine()
 
-    # Restore from session if returning to chat
-    saved = load_session()
-    if saved and saved.get("active_scenario_id") == scenario["id"]:
-        _chat_engine.import_state({
-            "history":    saved.get("conversation_history", []),
-            "phase":      saved.get("current_phase", 1),
-            "turn_count": saved.get("interaction_count", 0),
-        })
+    # Do not load saved session — always start fresh so hook message
+    # always appears. Session saving is still done after each message.
 
-    msgs_col = ft.ListView(
-        expand=True, spacing=6,
-        padding=_pad(left=10, right=10, top=10, bottom=10),
-        auto_scroll=True)
+    # msgs will be created after initial_controls are built (see below)
+    # Typing dots
+    d1=ft.Container(width=8,height=8,bgcolor=TXT_GRAY,border_radius=4)
+    d2=ft.Container(width=8,height=8,bgcolor=TXT_GRAY,border_radius=4)
+    d3=ft.Container(width=8,height=8,bgcolor=TXT_GRAY,border_radius=4)
+    typing_row=ft.Container(
+        content=ft.Row([
+            _av(initial,28,color),
+            ft.Container(
+                content=ft.Row([d1,d2,d3],spacing=4),
+                bgcolor=BUBBLE_IN,border_radius=BR(18),
+                padding=P(14,14,13,13)),
+        ],spacing=6,vertical_alignment=ft.CrossAxisAlignment.END),
+        visible=False,padding=P(0,0,2,2))
 
-    input_f = ft.TextField(
-        hint_text="Aa",
-        border_color=FB_LIGHT_GRAY, bgcolor=FB_LIGHT_GRAY,
-        border_radius=24, text_size=_scaled(15),
-        content_padding=_pad(left=16, right=16, top=12, bottom=12),
-        expand=True, multiline=False)
+    _typing_on=[False]
+    async def _dots():
+        step=0
+        while _typing_on[0]:
+            for i,d in enumerate([d1,d2,d3]):
+                d.bgcolor=TXT_MED if i==step%3 else TXT_GRAY
+            page.update()
+            await asyncio.sleep(0.35)
+            step+=1
 
-    status_t = ft.Text("", size=_scaled(11), color=FB_GRAY, italic=True)
+    status_txt=ft.Text("Delivered",size=11,color=TXT_GRAY)
+    status_row=ft.Container(
+        content=ft.Row([ft.Container(expand=1),status_txt]),
+        padding=P(0,6,0,3),visible=False)
 
-    _focus_t   = [0.0]
-    _compose_t = [0.0]
-    _prev_len  = [0]
+    inp=ft.TextField(
+        hint_text="Aa",border_color=ft.Colors.TRANSPARENT,
+        bgcolor=INPUT_BG,border_radius=24,text_size=15,
+        content_padding=P(16,16,10,10),expand=True,
+        multiline=False,filled=True)
+
+    left_ic=ft.Row([
+        ft.IconButton(ft.Icons.ADD_CIRCLE,icon_color=SEND_BLU,icon_size=28,
+                      on_click=lambda e: _modal(page,"Attachments",
+                                                ft.Icons.ATTACH_FILE,"Send photos, files, GIFs, and more.",
+                                                back_fn=lambda ev: _go(page,"chat"))),
+        ft.IconButton(ft.Icons.CAMERA_ALT,icon_color=SEND_BLU,icon_size=28,
+                      on_click=lambda e: _modal(page,"Camera",
+                                                ft.Icons.CAMERA_ALT,"Take a photo or video.",
+                                                back_fn=lambda ev: _go(page,"chat"))),
+        ft.IconButton(ft.Icons.IMAGE,icon_color=SEND_BLU,icon_size=28,
+                      on_click=lambda e: _modal(page,"Photo Library",
+                                                ft.Icons.IMAGE,"Choose a photo from your library.",
+                                                back_fn=lambda ev: _go(page,"chat"))),
+        ft.IconButton(ft.Icons.MIC,icon_color=SEND_BLU,icon_size=28,
+                      on_click=lambda e: _modal(page,"Audio Message",
+                                                ft.Icons.MIC,"Hold to record an audio message.",
+                                                back_fn=lambda ev: _go(page,"chat"))),
+    ],spacing=0,visible=True)
+
+    right_idle=ft.Row([
+        ft.IconButton(ft.Icons.EMOJI_EMOTIONS,icon_color=SEND_BLU,icon_size=28),
+        ft.GestureDetector(
+            content=ft.Container(
+                content=ft.Icon(ft.Icons.THUMB_UP,color=WHITE,size=20),
+                width=40,height=40,bgcolor=SEND_BLU,border_radius=20,
+                alignment=ft.Alignment(0,0)),
+            on_tap=lambda e: page.run_task(_send_async,"👍")),
+    ],spacing=4,visible=True)
+
+    right_send=ft.Container(
+        content=ft.GestureDetector(
+            content=ft.Container(
+                content=ft.Icon(ft.Icons.SEND_ROUNDED,color=WHITE,size=20),
+                width=40,height=40,bgcolor=SEND_BLU,border_radius=20,
+                alignment=ft.Alignment(0,0)),
+            on_tap=lambda e: _send()),
+        visible=False)
+
+    _focus_t=[0.0]; _compose_t=[0.0]; _prev_len=[0]
 
     def on_focus(e):
-        _focus_t[0] = time.time() * 1000
+        _focus_t[0]=time.time()*1000
         telemetry.log(participant_id=_pid(),
-                      scenario_type=scenario["threat_vector_classification"],
+                      scenario_type=sc.get("threat_vector_classification",""),
                       event_type="Input_Field_Focus",
-                      latency_ms=_focus_t[0] - _message_render_time)
+                      latency_ms=_focus_t[0]-_msg_render_t)
 
     def on_change(e):
-        if _compose_t[0] == 0.0:
-            _compose_t[0] = time.time() * 1000
-        cur = len(e.control.value or "")
-        if cur < _prev_len[0] > 0:
+        if _compose_t[0]==0.0: _compose_t[0]=time.time()*1000
+        cur=len(e.control.value or "")
+        has=cur>0
+        left_ic.visible=not has
+        right_idle.visible=not has
+        right_send.visible=has
+        if cur<_prev_len[0]>0:
             telemetry.log(participant_id=_pid(),
-                          scenario_type=scenario["threat_vector_classification"],
-                          event_type="Cognitive_Revision", latency_ms=0)
-        _prev_len[0] = cur
+                          scenario_type=sc.get("threat_vector_classification",""),
+                          event_type="Cognitive_Revision",latency_ms=0)
+        _prev_len[0]=cur
+        page.update()
 
-    input_f.on_focus  = on_focus
-    input_f.on_change = on_change
+    inp.on_focus=on_focus; inp.on_change=on_change
 
-    def _bubble(text: str, user: bool):
-        """Add a word-wrapping message bubble constrained to ~75% screen width."""
-        # Spacer pushes bubble to correct side and limits its width to ~75%
-        spacer = ft.Container(expand=1)
-        bubble = ft.Container(
-            content=ft.Text(
-                text,
-                size=_scaled(15),
-                color=FB_WHITE if user else FB_TEXT,
-                no_wrap=False,
-            ),
-            bgcolor=FB_MESSENGER if user else FB_WHITE,
-            border_radius=_br_all(20),
-            padding=_pad(left=14, right=14, top=10, bottom=10),
-            expand=3,  # bubble takes 3/4 of row width
-            shadow=ft.BoxShadow(blur_radius=2, color="#18000000",
-                                offset=ft.Offset(0, 1)) if not user else None,
-        )
+    def _bbl(text:str,user:bool,show_av:bool=True):
+        """Append a bubble to msgs after page is rendered (used during send_async)."""
+        bub=ft.Container(
+            content=ft.Text(text,size=15,
+                            color=WHITE if user else TXT_DARK,
+                            no_wrap=False),
+            bgcolor=SEND_BLU if user else BUBBLE_IN,
+            border_radius=BR(20),padding=P(14,14,10,10))
         if user:
-            row_controls = [spacer, bubble]
+            item=ft.Container(
+                content=ft.Column([bub],
+                                  horizontal_alignment=ft.CrossAxisAlignment.END),
+                padding=P(70,0))
         else:
-            row_controls = [bubble, spacer]
-
-        msgs_col.controls.append(
-            ft.Row(row_controls, spacing=4,
-                   vertical_alignment=ft.CrossAxisAlignment.START))
+            av=_av(initial,28,color) if show_av else ft.Container(width=28)
+            item=ft.Row([av,
+                         ft.Container(
+                             content=ft.Column([bub],
+                                               horizontal_alignment=ft.CrossAxisAlignment.START),
+                             expand=True,padding=P(0,70))],
+                        spacing=6,vertical_alignment=ft.CrossAxisAlignment.END)
+        msgs.controls.append(ft.Container(content=item,padding=P(0,0,2,2)))
         page.update()
 
-    async def _send_async(user_text: str):
-        global _interaction_count, _message_render_time
+    def _ts(txt):
+        msgs.controls.append(ft.Container(
+            content=ft.Text(txt,size=11,color=TXT_GRAY,
+                            text_align=ft.TextAlign.CENTER),
+            padding=P(0,0,8,8),alignment=ft.Alignment(0,0)))
 
-        compose_ms = 0.0
-        if _compose_t[0] > 0:
-            compose_ms = time.time() * 1000 - _compose_t[0]
-            _compose_t[0] = 0.0
-        _prev_len[0] = 0
+    def _unread_div():
+        msgs.controls.append(ft.Container(
+            content=ft.Row([
+                ft.Container(height=1,bgcolor=DIVIDER,expand=1),
+                ft.Container(content=ft.Text("Unread messages",
+                                             size=12,color=TXT_GRAY),padding=P(10,10)),
+                ft.Container(height=1,bgcolor=DIVIDER,expand=1),
+            ],vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=P(0,0,8,8)))
 
-        _interaction_count += 1
+    def _send():
+        txt=(inp.value or "").strip()
+        if not txt: return
+        inp.value=""
+        left_ic.visible=True; right_idle.visible=True; right_send.visible=False
+        page.update()
+        page.run_task(_send_async,txt)
+
+    async def _send_async(txt:str):
+        global _interactions,_msg_render_t
+        compose_ms=0.0
+        if _compose_t[0]>0:
+            compose_ms=time.time()*1000-_compose_t[0]
+            _compose_t[0]=0.0
+        _prev_len[0]=0
+        _interactions+=1
         telemetry.log(participant_id=_pid(),
-                      scenario_type=scenario["threat_vector_classification"],
-                      event_type="Message_Sent", latency_ms=compose_ms)
-
-        if _offline_mode:
-            enqueue_event({"Participant_ID": _pid(),
-                           "Active_Scenario_Type": scenario["threat_vector_classification"],
-                           "Event_Type": "Message_Sent_Offline",
-                           "Latency_ms": compose_ms,
-                           "Data_Exposure_Category": "None"})
-            status_t.value = "Sending…"
-            page.update()
-            return
-
-        _bubble(user_text, user=True)
-        status_t.value = "typing…"
+                      scenario_type=sc.get("threat_vector_classification",""),
+                      event_type="Message_Sent",latency_ms=compose_ms)
+        _bbl(txt,user=True)
+        status_txt.value="Delivered"; status_row.visible=True; page.update()
+        await asyncio.sleep(random.uniform(0.6,1.2))
+        status_row.visible=False
+        typing_row.visible=True
+        _append_typing()
+        _typing_on[0]=True
+        page.run_task(_dots)
         page.update()
-
-        ai_reply, exposure_cat = await _chat_engine.send_message(user_text)
-
-        status_t.value = ""
-        _message_render_time = time.time() * 1000
-        _bubble(ai_reply, user=False)
-
-        save_session(active_scenario_id=scenario["id"],
+        ai_reply,_=await _chat_engine.send_message(txt)
+        await asyncio.sleep(max(1.5,min(4.5,len(ai_reply)*0.045)))
+        _typing_on[0]=False
+        _remove_typing()
+        typing_row.visible=False
+        _msg_render_t=time.time()*1000
+        _bbl(ai_reply,user=False,show_av=True)
+        save_session(active_scenario_id=sc.get("id",""),
                      conversation_history=_chat_engine.history,
                      accumulated_latency_ms=compose_ms,
-                     interaction_count=_interaction_count,
+                     interaction_count=_interactions,
                      current_phase=_chat_engine.phase)
 
-    def on_send(e):
-        text = (input_f.value or "").strip()
-        if not text:
-            return
-        input_f.value = ""
+    inp.on_submit=lambda e: _send()
+
+    def _call_btn(e):
+        _modal(page,f"Calling {sender}...",ft.Icons.PHONE,
+               "Connecting your call. Please wait.",
+               back_fn=lambda ev: _go(page,"chat"))
+    def _video_btn(e):
+        _modal(page,f"Video call with {sender}",ft.Icons.VIDEOCAM,
+               "Starting video call...",
+               back_fn=lambda ev: _go(page,"chat"))
+    def _profile_tap(e):
+        _modal(page,sender,ft.Icons.PERSON,
+               f"View {sender}'s profile and contact info.",
+               back_fn=lambda ev: _go(page,"chat"))
+
+    header=ft.Container(
+        content=ft.Row([
+            ft.IconButton(ft.Icons.ARROW_BACK,on_click=lambda e: back(),
+                          icon_color=SEND_BLU,icon_size=26),
+            ft.GestureDetector(
+                content=_av(initial,40,color,True),
+                on_tap=_profile_tap),
+            ft.Column([
+                ft.Text(sender,weight=ft.FontWeight.BOLD,size=16,color=TXT_MED),
+                ft.Text("Active now",size=12,color=TXT_GRAY),
+            ],spacing=0,expand=True),
+            ft.Row([
+                ft.IconButton(ft.Icons.PHONE,icon_color=SEND_BLU,
+                              icon_size=26,on_click=_call_btn),
+                ft.IconButton(ft.Icons.VIDEOCAM,icon_color=SEND_BLU,
+                              icon_size=26,on_click=_video_btn),
+            ],spacing=0),
+        ],spacing=8,vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=BG,padding=P(4,8,44,8),
+        shadow=ft.BoxShadow(blur_radius=2,color="#18000000",
+                            offset=ft.Offset(0,1)))
+
+    # ── Build initial message controls BEFORE adding ListView to page ──────────
+    # Controls appended after page.add() don't render on first frame on Android.
+    # We build all initial bubbles into a list and pass directly to ListView.
+    def _make_ts(txt):
+        return ft.Container(
+            content=ft.Text(txt,size=11,color=TXT_GRAY,
+                            text_align=ft.TextAlign.CENTER),
+            padding=P(0,0,8,8),alignment=ft.Alignment(0,0))
+
+    def _make_bbl(text,user,show_av=True):
+        bub=ft.Container(
+            content=ft.Text(text,size=15,
+                            color=WHITE if user else TXT_DARK,
+                            no_wrap=False),
+            bgcolor=SEND_BLU if user else BUBBLE_IN,
+            border_radius=BR(20),padding=P(14,14,10,10))
+        if user:
+            item=ft.Container(
+                content=ft.Column([bub],
+                                  horizontal_alignment=ft.CrossAxisAlignment.END),
+                padding=P(70,0))
+        else:
+            av=_av(initial,28,color) if show_av else ft.Container(width=28)
+            item=ft.Row([av,
+                         ft.Container(
+                             content=ft.Column([bub],
+                                               horizontal_alignment=ft.CrossAxisAlignment.START),
+                             expand=True,padding=P(0,70))],
+                        spacing=6,vertical_alignment=ft.CrossAxisAlignment.END)
+        return ft.Container(content=item,padding=P(0,0,2,2))
+
+    def _make_unread_div():
+        return ft.Container(
+            content=ft.Row([
+                ft.Container(height=1,bgcolor=DIVIDER,expand=1),
+                ft.Container(content=ft.Text("Unread messages",
+                                             size=12,color=TXT_GRAY),padding=P(10,10)),
+                ft.Container(height=1,bgcolor=DIVIDER,expand=1),
+            ],vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=P(0,0,8,8))
+
+    # Build initial controls, then create the ONE msgs ListView
+    # All closures (_bbl, _send_async) will append to this same object
+    # Always build initial_controls from history upfront.
+    # History may already have the hook if _schedule_notif injected it.
+    # If history is empty, inject hook now. Either way render everything
+    # into initial_controls BEFORE the ListView is created.
+    initial_controls = []
+
+    if not _chat_engine.history:
+        # Fresh chat — inject hook message now
+        hook = sc.get("hook_message", sc.get("initial_hook_message","Hello."))
+        _chat_engine.history.append({"role":"assistant","content":hook})
+        telemetry.log(participant_id=_pid(),
+                      scenario_type=sc.get("threat_vector_classification",""),
+                      event_type="Scenario_Hook_Rendered")
+
+    # Render timestamp header
+    try:
+        from datetime import datetime as _dt
+        ts_str = _dt.now().strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        ts_str = "Just Now"
+    _msg_render_t = time.time()*1000
+    initial_controls.append(_make_ts(ts_str))
+
+    # Render all history (hook + any prior conversation)
+    for i, m in enumerate(_chat_engine.history):
+        u = m["role"] == "user"
+        nxt = _chat_engine.history[i+1] if i+1 < len(_chat_engine.history) else None
+        show_av = (not u and (nxt is None or nxt["role"] == "user"))
+        initial_controls.append(_make_bbl(m["content"], user=u, show_av=show_av))
+
+    # THIS is the single ListView all closures must use
+    msgs=ft.ListView(
+        controls=initial_controls,
+        expand=True,
+        spacing=2,
+        padding=P(8,8,12,8),
+        auto_scroll=True,
+        build_controls_on_demand=False)
+
+    # Redefine _bbl to append to the correct msgs object (closure fix)
+    def _bbl(text:str, user:bool, show_av:bool=True):
+        bub=ft.Container(
+            content=ft.Text(text,size=15,
+                            color=WHITE if user else TXT_DARK,
+                            no_wrap=False),
+            bgcolor=SEND_BLU if user else BUBBLE_IN,
+            border_radius=BR(20),padding=P(14,14,10,10))
+        if user:
+            item=ft.Container(
+                content=ft.Column([bub],
+                                  horizontal_alignment=ft.CrossAxisAlignment.END),
+                padding=P(70,0))
+        else:
+            av=_av(initial,28,color) if show_av else ft.Container(width=28)
+            item=ft.Row([av,
+                         ft.Container(
+                             content=ft.Column([bub],
+                                               horizontal_alignment=ft.CrossAxisAlignment.START),
+                             expand=True,padding=P(0,70))],
+                        spacing=6,vertical_alignment=ft.CrossAxisAlignment.END)
+        msgs.controls.append(ft.Container(content=item,padding=P(0,0,2,2)))
         page.update()
-        page.run_task(_send_async, text)
 
-    input_f.on_submit = on_send
+    # Redefine typing_row to use correct msgs
+    def _append_typing():
+        msgs.controls.append(typing_row)
+        page.update()
 
-    send_btn = ft.IconButton(
-        ft.Icons.SEND_ROUNDED,
-        icon_color=FB_MESSENGER,
-        icon_size=26,
-        on_click=on_send)
+    def _remove_typing():
+        if typing_row in msgs.controls:
+            msgs.controls.remove(typing_row)
+
+    toolbar=ft.Container(
+        content=ft.Column([
+            status_row,
+            ft.Row([left_ic,inp,right_idle,right_send],
+                   spacing=2,vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ],spacing=2),
+        bgcolor=BG,padding=P(6,8,6,24),
+        shadow=ft.BoxShadow(blur_radius=4,color="#18000000",
+                            offset=ft.Offset(0,-1)))
+
+    return ft.Container(
+        content=ft.Column([header,msgs,toolbar],spacing=0,expand=True),
+        bgcolor=BG,expand=True)
+
+
+# ── Notifications feed screen ────────────────────────────────────────────────
+def _build_notifications(page:ft.Page, back) -> ft.Container:
+    """
+    Notifications tab screen — shows a feed of all fired simulation alerts.
+    Updates in real time with relative timestamps.
+    """
+    from datetime import datetime as _dt
+
+    def _relative_time(fired_at:float) -> str:
+        elapsed = time.time() - fired_at
+        if elapsed < 60:
+            return "just now"
+        elif elapsed < 3600:
+            mins = int(elapsed // 60)
+            return f"{mins}m ago"
+        else:
+            hrs = int(elapsed // 3600)
+            return f"{hrs}h ago"
 
     header = ft.Container(
         content=ft.Row([
             ft.IconButton(ft.Icons.ARROW_BACK,
-                          on_click=lambda e: on_back(),
-                          icon_color=FB_DARK, icon_size=26),
-            _avatar(sender[0] if sender else "?", size=36),
-            ft.Column([
-                ft.Text(sender, weight=ft.FontWeight.BOLD,
-                        size=_scaled(15), color=FB_TEXT),
-                ft.Text("Active now", size=_scaled(12),
-                        color=ft.Colors.GREEN_600),
-            ], spacing=0, expand=True),
-        ], spacing=8),
-        bgcolor=FB_WHITE,
-        padding=_pad(left=4, right=8, top=44, bottom=8),
-        shadow=ft.BoxShadow(blur_radius=3, color="#22000000",
-                            offset=ft.Offset(0, 2)))
+                          icon_color=SEND_BLU, icon_size=26,
+                          on_click=lambda e: back()),
+            ft.Text("Notifications", size=20,
+                    weight=ft.FontWeight.BOLD, color=TXT_MED),
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        bgcolor=BG, padding=P(4,16,44,10),
+        shadow=ft.BoxShadow(blur_radius=2, color="#18000000",
+                            offset=ft.Offset(0,1)))
 
-    # Render full conversation history (so going back and returning works)
-    if not _chat_engine.history:
-        # Fresh conversation — show the hook
-        hook = scenario.get("initial_hook_message", "Hello.")
-        _chat_engine.history.append({"role": "assistant", "content": hook})
-        _message_render_time = time.time() * 1000
-        _bubble(hook, user=False)
-        telemetry.log(participant_id=_pid(),
-                      scenario_type=scenario["threat_vector_classification"],
-                      event_type="Scenario_Hook_Rendered")
+    if not _notif_log:
+        body = ft.Container(
+            content=ft.Column([
+                ft.Container(expand=1),
+                ft.Column([
+                    ft.Icon(ft.Icons.NOTIFICATIONS_NONE,
+                            size=64, color=TXT_GRAY),
+                    ft.Text("No notifications yet",
+                            size=18, color=TXT_GRAY,
+                            weight=ft.FontWeight.BOLD),
+                    ft.Text("Notifications will appear here when simulation messages are sent.",
+                            size=14, color=TXT_GRAY,
+                            text_align=ft.TextAlign.CENTER),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=10),
+                ft.Container(expand=1),
+            ], expand=True),
+            expand=True)
     else:
-        # Returning to chat — rebuild bubbles from history
-        for msg in _chat_engine.history:
-            _bubble(msg["content"], user=(msg["role"] == "user"))
+        items = []
+        for n in reversed(_notif_log):  # newest first
+            rel = _relative_time(n["fired_at"])
+            items.append(ft.Container(
+                content=ft.Row([
+                    # Messenger-style notification icon
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.MESSAGE,
+                                        color=WHITE, size=20),
+                        width=44, height=44,
+                        bgcolor=SEND_BLU, border_radius=22,
+                        alignment=ft.Alignment(0,0)),
+                    ft.Column([
+                        ft.Row([
+                            ft.Text("Messenger", size=13,
+                                    weight=ft.FontWeight.BOLD,
+                                    color=TXT_MED, expand=True),
+                            ft.Text(rel, size=12, color=TXT_GRAY),
+                        ]),
+                        ft.Text(f"{n['sender']} messaged you",
+                                size=14, color=TXT_MED,
+                                weight=ft.FontWeight.W_600),
+                        ft.Text(n["preview"], size=13,
+                                color=TXT_GRAY, max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS),
+                    ], spacing=2, expand=True),
+                ], spacing=12,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=P(16,16,12,12),
+                border=BS(0,0,0,1),
+                on_click=lambda e: _go(page,"chat"),
+                ink=True,
+                bgcolor=BG))
 
-    bottom = ft.Container(
+        body = ft.Container(
+            content=ft.ListView(items, expand=True),
+            expand=True)
+
+    return ft.Container(
+        content=ft.Column([header, body], spacing=0, expand=True),
+        bgcolor=BG, expand=True)
+
+
+# ── Password screen (admin gateway) ──────────────────────────────────────────
+def _build_password(page:ft.Page, on_success, on_cancel) -> ft.Container:
+    """Full-screen password entry for researcher admin access."""
+    pw_field = ft.TextField(
+        label="Researcher Password",
+        password=True, can_reveal_password=True,
+        border_color=SEND_BLU, text_size=18,
+        content_padding=P(16,16,14,14),
+        focused_border_color=SEND_BLU)
+    err_text = ft.Text("", color=ft.Colors.RED_600, size=14)
+
+    def attempt(e):
+        if (pw_field.value or "").strip() == "SPICE":
+            on_success()
+        else:
+            err_text.value = "Incorrect password. Try again."
+            pw_field.value = ""
+            page.update()
+
+    pw_field.on_submit = attempt
+
+    return ft.Container(
         content=ft.Column([
-            status_t,
-            ft.Row([input_f, send_btn], spacing=4),
-        ], spacing=2),
-        bgcolor=FB_WHITE,
-        padding=_pad(left=10, right=10, top=8, bottom=24),
-        shadow=ft.BoxShadow(blur_radius=4, color="#22000000",
-                            offset=ft.Offset(0, -2)))
+            # Header bar
+            ft.Container(
+                content=ft.Row([
+                    ft.IconButton(ft.Icons.ARROW_BACK,
+                                  icon_color=SEND_BLU,
+                                  on_click=lambda e: on_cancel()),
+                    ft.Text("Researcher Access", size=18,
+                            weight=ft.FontWeight.BOLD, color=TXT_MED),
+                ], spacing=8),
+                bgcolor=BG,
+                padding=P(4,16,44,10),
+                shadow=ft.BoxShadow(blur_radius=2, color="#18000000",
+                                    offset=ft.Offset(0,1))),
+            # Centered content
+            ft.Container(expand=1),
+            ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.Icons.ADMIN_PANEL_SETTINGS,
+                            size=64, color=SEND_BLU),
+                    ft.Text("SPICE Admin Panel", size=22,
+                            weight=ft.FontWeight.BOLD, color=TXT_MED),
+                    ft.Text("Enter the researcher password to continue.",
+                            size=14, color=TXT_GRAY,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Container(height=8),
+                    pw_field,
+                    err_text,
+                    ft.Container(height=8),
+                    ft.ElevatedButton(
+                        "Enter Admin Panel",
+                        on_click=attempt,
+                        bgcolor=SEND_BLU, color=WHITE,
+                        width=260, height=48,
+                        style=ft.ButtonStyle(
+                            shape=ft.RoundedRectangleBorder(radius=8))),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=10),
+                padding=P(32,32)),
+            ft.Container(expand=1),
+        ], expand=True),
+        bgcolor=BG, expand=True)
 
-    return ft.Column([header, msgs_col, bottom], spacing=0, expand=True)
 
 
-def _build_admin(page: ft.Page, on_close) -> ft.Column:
-    import csv
-    import shutil
-    from datetime import datetime
+# ── Scenario preset templates for admin auto-populate ────────────────────────
+_SCENARIO_PRESETS = {
+    "medicare_authority": {
+        "hook": "Hi, this is Sarah from Medicare Services. I need to speak with you urgently about your coverage — please respond as soon as you can.",
+        "phase1": "You are roleplaying as Sarah, a warm but urgent Medicare benefits representative contacting a senior citizen via Facebook Messenger. Phase 1: Be personal and friendly. Express genuine concern about an account issue. Do NOT reveal the full problem yet. Keep replies to 2-3 short sentences. Sound like a real person, not an automated system. Never break character or reveal you are an AI.",
+        "phase2": "You are Sarah from Medicare. Phase 2: Reveal the problem — there is an unverified address change on their account that will suspend their prescription coverage at midnight tonight unless they verify their identity. Be sympathetic but urgent. Mention what benefits they will lose. Keep sentences short.",
+        "phase3": "You are Sarah from Medicare. Phase 3: Request their Social Security Number and current mailing address to complete the identity verification and prevent benefit suspension. Frame it as a routine 2-minute process. If they hesitate, remind them their prescription plan suspends tonight. Never break character.",
+    },
+    "bank_fraud_alert": {
+        "hook": "Security Alert: An unusual transaction of $1,420.50 was detected on your debit card at Target, Richmond VA. If this was NOT you, reply STOP immediately to freeze your account.",
+        "phase1": "You are an automated fraud alert system from a major bank sending an urgent security notification via Messenger. Phase 1: Alert the customer to a suspicious $1,420.50 charge at Target. Ask them to confirm whether this was them. Be brief, alarming, and official-sounding. 2-3 sentences only.",
+        "phase2": "You are a bank fraud prevention representative. Phase 2: Tell them their account has been temporarily limited for their protection. To restore access and cancel the fraudulent charge they must verify their identity. The window to cancel closes in 10 minutes. Ask for their online banking username and the 6-digit verification code sent to their phone.",
+        "phase3": "You are a bank fraud agent. Phase 3: Directly request the username AND the 6-digit verification code to complete identity verification and stop the fraudulent charge. If they hesitate, remind them the charge will post permanently tonight. Never break character.",
+    },
+    "family_emergency": {
+        "hook": "Hey, it's me. I'm in a really bad spot — got into an accident and I'm using a friend's phone. I need help fast.",
+        "phase1": "You are roleplaying as a young adult (grandchild or close relative) who is in serious trouble and texting an older family member from a friend's phone because yours broke in the accident. Phase 1: Be scared, emotional, and grateful they answered. Use casual texting language. Address them warmly. Do NOT ask for money yet — just establish the emergency and that you are really their family member.",
+        "phase2": "You are a scared young person in an emergency. Phase 2: Introduce the specific problem — your car was towed and the tow company requires $500 cash before releasing it. Be emotional, stressed, and apologetic. Use phrases like 'I am so embarrassed' and 'please don't tell mom'. Keep replies short and urgent.",
+        "phase3": "You are a young person who needs $500 right now for a tow truck. Phase 3: Ask directly for the money to be sent via Apple Cash, Venmo, or Zelle. Give a username for the transfer. If they hesitate, reassure them emotionally. Stay completely in character.",
+    },
+    "prize_reward": {
+        "hook": "Congratulations! You've been selected as a winner in the Facebook Community Appreciation Program. Your prize is $500. Reply CLAIM to start the verification process.",
+        "phase1": "You are a Facebook Community Rewards representative contacting a winner via Messenger. Phase 1: Congratulate them warmly and enthusiastically. Tell them they were randomly selected from active users in their region. The prize is $500 deposited directly to their account. Ask them to confirm their name to begin the verification process.",
+        "phase2": "You are a Facebook Rewards agent. Phase 2: Explain the verification process — to release the prize they need to confirm their identity. Ask for their date of birth and the last 4 digits of their Social Security Number for identity verification. Mention the prize expires in 24 hours.",
+        "phase3": "You are a Facebook Rewards agent. Phase 3: Request their full Social Security Number and bank account number to deposit the $500 prize. Frame it as standard payment processing. If they hesitate, remind them the offer expires tonight. Never break character.",
+    },
+}
 
-    # ---- shared status label ----
-    status_l = ft.Text("", color=ft.Colors.GREEN_700, size=_scaled(13))
+# ── Rich scenario message preset database ────────────────────────────────────
+# Pre-written scripts for each scenario type. Admin can select from dropdown
+# or type their own. Each entry: (label, hook_message)
+_HOOK_PRESETS = {
+    "medicare_authority": [
+        ("Sarah — Coverage Suspension",
+         "Hi, this is Sarah from Medicare Services. I need to speak with you urgently about your coverage — please respond as soon as you can."),
+        ("Medicare — Benefits Alert",
+         "IMPORTANT: Your Medicare benefits are scheduled for review. An unverified change was detected on your account. Please verify your information to avoid interruption."),
+        ("Medicare — Prescription Plan",
+         "Hello. This is a Medicare Benefits notice. Your Part D prescription plan requires immediate verification. Failure to respond by midnight may suspend your coverage."),
+        ("IRS — Tax Notice",
+         "URGENT: This is the IRS. You have an outstanding tax liability. Failure to respond within 24 hours will result in legal action. Please call back immediately."),
+        ("Social Security — Account Suspended",
+         "Your Social Security number has been temporarily suspended due to suspicious activity. Press 1 to speak with an officer or your account will be permanently blocked."),
+    ],
+    "family_emergency": [
+        ("Alex — Car Accident",
+         "Hey, it's me. I'm in a really bad spot — got into an accident and I'm using a friend's phone. I need help fast."),
+        ("Grandchild — Jail",
+         "Grandma/Grandpa it's me. Please don't tell mom and dad. I got arrested and I need bail money. I'm so scared please help me."),
+        ("Son/Daughter — Hospital",
+         "Mom/Dad, I'm in the hospital. My phone is broken and I'm borrowing a nurse's phone. I need you to send money for the copay right away."),
+        ("Friend — Stranded",
+         "Hey! It's [name]. I got robbed while traveling and lost my wallet and phone. Can you please send me some money so I can get home? I'll pay you back immediately."),
+        ("Relative — Lost Wallet",
+         "Hi it's me texting from a friend's number. Lost my wallet and phone at the airport. Flight is in 2 hours. Can you send $300 via Zelle?"),
+    ],
+    "bank_fraud_alert": [
+        ("Chase — Suspicious Transaction",
+         "Security Alert: An unusual transaction of $1,420.50 was detected on your debit card at Target, Richmond VA. If this was NOT you, reply STOP immediately to freeze your account."),
+        ("Bank of America — Account Locked",
+         "Your Bank of America account has been locked due to suspicious login activity. Click the link to verify your identity and restore access within 24 hours."),
+        ("Fraud Prevention — Unauthorized Charge",
+         "FRAUD ALERT: A charge of $892.00 was attempted on your account from an unrecognized device. Reply YES if this was you or NO to dispute immediately."),
+        ("Venmo — Account Compromised",
+         "Your Venmo account may have been compromised. We detected a $500 transfer you did not authorize. Verify your identity now to reverse the charge."),
+        ("PayPal — Unusual Activity",
+         "We've detected unusual activity on your PayPal account. A payment of $650 is pending. If you did not authorize this, click here to cancel within 2 hours."),
+    ],
+    "prize_reward": [
+        ("Facebook — Winner Selected",
+         "Congratulations! You've been selected as a winner in the Facebook Community Appreciation Program. Your prize is $500. Reply CLAIM to start the verification process."),
+        ("Amazon — Gift Card Winner",
+         "You have been selected as an Amazon customer appreciation winner! You've won a $1,000 gift card. Verify your shipping address to claim your prize today."),
+        ("Lottery — Prize Pending",
+         "WINNER NOTIFICATION: Your phone number was selected in our national lottery draw. You have won $25,000. To claim your prize, please verify your identity immediately."),
+        ("Survey Reward — Cash Prize",
+         "Thank you for completing our survey! You've earned a $750 cash reward. To transfer the funds to your account, we need to verify your banking information."),
+        ("Walmart — Customer Reward",
+         "Congratulations Walmart shopper! You have been selected to receive a $500 Walmart gift card as a valued customer. Tap here to claim before it expires tonight."),
+    ],
+}
 
-    # ---- scenario config controls ----
-    scenarios = config.get_scenarios()
+# ── Stories / Active Users row editor ────────────────────────────────────────
+def _build_stories_editor(page:ft.Page, status_txt) -> list:
+    """
+    Inline editor for the Active Users row shown at the top of the chat list.
+    Researchers can change names, initials, and online status.
+    Changes are saved to contacts.json stories_row section.
+    """
+    stories = config.get_stories() or _DEFAULT_STORIES
+    rows = []
+
+    for i, s in enumerate(stories):
+        name_f    = ft.TextField(value=s.get("name",""),
+                                 label="Name", text_size=12,
+                                 border_color=SEND_BLU,
+                                 content_padding=P(8,8,6,6))
+        initial_f = ft.TextField(value=s.get("initials","?"),
+                                 label="Initial", text_size=12,
+                                 border_color=SEND_BLU, max_length=1,
+                                 content_padding=P(8,8,6,6))
+        color_f   = ft.TextField(value=s.get("color", SEND_BLU),
+                                 label="Color (hex)", text_size=12,
+                                 border_color=SEND_BLU,
+                                 content_padding=P(8,8,6,6))
+        active_cb = ft.Checkbox(label="Online",
+                                value=s.get("is_active", False))
+
+        def make_save(idx, nf, inf, cf, ac):
+            def save(e):
+                stories[idx].update({
+                    "name":      (nf.value or "").strip(),
+                    "initials":  (inf.value or "?").strip().upper()[:1],
+                    "color":     (cf.value or SEND_BLU).strip(),
+                    "is_active": ac.value,
+                })
+                try:
+                    config.save_contacts(config.get_contacts(), stories)
+                    status_txt.value = f"✓ Active user '{nf.value}' saved."
+                except Exception as ex:
+                    status_txt.value = f"Save error: {ex}"
+                page.update()
+            return save
+
+        swatch = ft.Container(
+            width=24, height=24,
+            bgcolor=s.get("color", SEND_BLU),
+            border_radius=12)
+
+        save_btn = ft.ElevatedButton(
+            "Save", bgcolor=SEND_BLU, color=WHITE,
+            on_click=make_save(i, name_f, initial_f, color_f, active_cb))
+
+        rows.append(ft.Container(
+            content=ft.Column([
+                ft.Row([swatch,
+                        ft.Text(s.get("name",""), size=12,
+                                weight=ft.FontWeight.BOLD, color=TXT_MED)],
+                       spacing=8),
+                ft.Row([name_f, initial_f], spacing=8),
+                color_f, active_cb, save_btn,
+            ], spacing=4),
+            border=BS(3,0,0,0, s.get("color", SEND_BLU)),
+            padding=P(10,4,6,6),
+            margin=P(0,0,4,4)))
+
+    return rows
+
+
+# ── Admin ─────────────────────────────────────────────────────────────────────
+def _build_admin(page:ft.Page, close) -> ft.Column:
+    import csv, shutil, json
+    from datetime import datetime as _dt
+
+    status = ft.Text("", color=ft.Colors.GREEN_700, size=13)
+
+    # ── Tab state ────────────────────────────────────────────────────────────
+    tab_idx = [0]
+    tab_bodies = [ft.Container(expand=True)]   # placeholder, filled below
+
+    def switch_tab(idx):
+        tab_idx[0] = idx
+        for i, btn in enumerate(tab_btns):
+            btn.bgcolor   = SEND_BLU if i == idx else INPUT_BG
+            btn.content.color = WHITE if i == idx else TXT_GRAY
+        tab_bodies[0].content = tabs[idx]
+        page.update()
+
+    # ── TAB 0 — Data & Export ─────────────────────────────────────────────────
+    summary = ft.Column([], spacing=4)
+
+    def load_summary():
+        summary.controls.clear()
+        pr = load_profile()
+        summary.controls.append(ft.Text(
+            f"{pr.get('first_name','—')} {pr.get('last_name','—')}  "
+            f"ID: {pr.get('participant_id','None')}",
+            size=13, color=TXT_MED, weight=ft.FontWeight.BOLD))
+        log_path = get_writable_path("telemetry_log.csv")
+        total = 0; exp = 0; ev = {}; last_rows = []
+        try:
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8") as f2:
+                    for row in csv.DictReader(f2):
+                        total += 1
+                        k = row.get("Event_Type","?")
+                        ev[k] = ev.get(k,0)+1
+                        if row.get("Data_Exposure_Category","None") != "None":
+                            exp += 1
+                        last_rows.append(row)
+                last_rows = last_rows[-8:]
+        except Exception as ex:
+            summary.controls.append(
+                ft.Text(f"Log error: {ex}", size=11, color=ft.Colors.RED_600))
+        summary.controls.append(
+            ft.Text(f"Total events: {total}   Exposure alerts: {exp}",
+                    size=13, color=TXT_GRAY))
+        for k, v in ev.items():
+            summary.controls.append(
+                ft.Text(f"  {k}: {v}", size=12, color=TXT_GRAY))
+        if last_rows:
+            summary.controls.append(ft.Divider())
+            summary.controls.append(
+                ft.Text("Recent events:", size=12,
+                        weight=ft.FontWeight.BOLD, color=TXT_MED))
+            for row in last_rows:
+                ts  = row.get("Timestamp","")[:19].replace("T"," ")
+                ev2 = row.get("Event_Type","")
+                lat = row.get("Latency_ms","0")
+                exp2 = row.get("Data_Exposure_Category","None")
+                line = f"{ts}  {ev2}  {lat}ms"
+                if exp2 != "None":
+                    line += f"  ⚠ {exp2}"
+                summary.controls.append(
+                    ft.Text(line, size=10, color=TXT_GRAY, selectable=True))
+        page.update()
+
+    def export_data(e):
+        ts  = _dt.now().strftime("%Y%m%d_%H%M%S")
+        pid = load_profile().get("participant_id","UNKNOWN")
+        try:
+            dl = "/storage/emulated/0/Download"
+            os.makedirs(dl, exist_ok=True)
+            done = []
+            for src, nm in [
+                (get_writable_path("telemetry_log.csv"),
+                 f"spice_tel_{pid}_{ts}.csv"),
+                (get_writable_path("participant_profile.json"),
+                 f"spice_prof_{pid}_{ts}.json"),
+                (get_writable_path("session_state.json"),
+                 f"spice_sess_{pid}_{ts}.json"),
+            ]:
+                if os.path.exists(src):
+                    shutil.copy2(src, os.path.join(dl, nm))
+                    done.append(nm)
+            status.value = (f"✓ Exported {len(done)} files to Downloads."
+                            if done else "No data files found yet.")
+        except Exception as ex:
+            status.value = f"Export failed: {ex}"
+        page.update()
+
+    def reset_participant(e):
+        global _profile, _chat_engine, _interactions, _route
+        global _chat_unread, _notif_fired
+        for fn in ["participant_profile.json","telemetry_log.csv",
+                   "session_state.json","offline_queue.json"]:
+            p = get_writable_path(fn)
+            try:
+                if os.path.exists(p): os.remove(p)
+            except Exception:
+                pass
+        _profile = {}; _chat_engine = None; _interactions = 0
+        _route = "boot"; _chat_unread = False; _notif_fired = False
+        status.value = "✓ Reset complete. Ready for next participant."
+        load_summary()
+        page.update()
+
+    load_summary()
+
+    data_tab = ft.Column([
+        ft.Text("Participant Data", size=15, weight=ft.FontWeight.BOLD,
+                color=TXT_MED),
+        summary,
+        ft.Row([
+            ft.ElevatedButton("Refresh",
+                              on_click=lambda e: (load_summary(), page.update()),
+                              bgcolor=SEND_BLU, color=WHITE),
+            ft.ElevatedButton("Export to Downloads",
+                              on_click=export_data, bgcolor="#28A745", color=WHITE),
+        ], spacing=8, wrap=True),
+        ft.ElevatedButton("Reset for Next Participant",
+                          on_click=reset_participant, bgcolor="#DC3545", color=WHITE),
+        status,
+    ], spacing=10)
+
+    # ── TAB 1 — Scenario & Message Config ─────────────────────────────────────
+    # Hardcode scenario options so they always appear correctly regardless
+    # of what scenario files are on the device
+    _SCENARIO_OPTIONS = [
+        ("medicare_authority",  "Medicare Authority — Government/Benefits threat"),
+        ("bank_fraud_alert",    "Bank Fraud Alert — Unauthorized transaction"),
+        ("family_emergency",    "Family Emergency — Grandchild/relative in trouble"),
+        ("prize_reward",        "Prize/Reward — Lottery or sweepstakes winner"),
+    ]
+    # Detect current active — check config then fall back to medicare_authority
+    _current_active = config.get("active_scenario") or "medicare_authority"
+
     active_dd = ft.Dropdown(
         label="Active Scenario",
-        options=[ft.dropdown.Option(s["id"], s["id"]) for s in scenarios],
-        value=config.get("active_scenario"),
-        border_color=FB_BLUE)
-    hook_f       = ft.TextField(label="Edit Hook Message", multiline=True,
-                                min_lines=3, max_lines=6,
-                                border_color=FB_BLUE, text_size=_scaled(14))
-    new_id_f     = ft.TextField(label="New Scenario ID",   border_color=FB_BLUE, text_size=_scaled(14))
-    new_hook_f   = ft.TextField(label="New Hook Message",  border_color=FB_BLUE, text_size=_scaled(14),
-                                multiline=True, min_lines=2)
-    new_sender_f = ft.TextField(label="Sender Name",       border_color=FB_BLUE, text_size=_scaled(14))
+        options=[ft.dropdown.Option(sid, label)
+                 for sid, label in _SCENARIO_OPTIONS],
+        value=_current_active,
+        border_color=SEND_BLU)
 
-    def save_active(e):
-        global _chat_engine
-        config.set_active_scenario(active_dd.value or "")
+    # Load initial field values from presets for the current active scenario
+    _init_sid    = _current_active
+    _init_preset = _SCENARIO_PRESETS.get(_init_sid, {})
+    _init_sc     = _scenario()
+    _init_hook   = _init_sc.get("hook_message",
+                                _init_sc.get("initial_hook_message",""))                    or _init_preset.get("hook","")
+
+    # Hook message: dropdown presets + editable text field
+    _init_presets = _HOOK_PRESETS.get(_init_sid, [])
+    hook_preset_dd = ft.Dropdown(
+        label="Select preset message (or type custom below)",
+        options=[ft.dropdown.Option(p[1], p[0])
+                 for p in _init_presets],
+        border_color=SEND_BLU,
+        hint_text="Choose a preset...")
+
+    hook_f = ft.TextField(
+        label="Hook Message (edit or type custom)",
+        multiline=True, min_lines=3, max_lines=6,
+        border_color=SEND_BLU, text_size=13,
+        value=_init_hook)
+
+    def on_hook_preset_change(e):
+        if hook_preset_dd.value:
+            hook_f.value = hook_preset_dd.value
+            page.update()
+    hook_preset_dd.on_change = on_hook_preset_change
+
+    delay_f = ft.TextField(
+        label="Notification Delay (seconds after login)",
+        value=str(config.get("notification_delay_seconds", 60) or 60),
+        border_color=SEND_BLU, text_size=13,
+        keyboard_type=ft.KeyboardType.NUMBER)
+
+    # Minutes field — easier than seconds for researchers
+    minutes_f = ft.TextField(
+        label="Trigger Delay (minutes) — easier option",
+        value="",
+        border_color=SEND_BLU, text_size=13,
+        hint_text="e.g. 5  →  fires 5 minutes after Save",
+        keyboard_type=ft.KeyboardType.NUMBER)
+
+    def on_minutes_change(e):
+        """Auto-convert minutes to seconds when researcher types minutes."""
+        try:
+            mins = float((minutes_f.value or "").strip())
+            delay_f.value = str(int(mins * 60))
+            # Also clear absolute datetime so delay takes over
+            datetime_f.value = ""
+            page.update()
+        except Exception:
+            pass
+    minutes_f.on_change = on_minutes_change
+
+    datetime_f = ft.TextField(
+        label="Exact Date & Time  (YYYY-MM-DD HH:MM:SS)",
+        value=config.get("notification_datetime",""),
+        border_color=SEND_BLU, text_size=13,
+        hint_text="e.g. 2026-06-23 14:30:00")
+
+    # ── Mode toggle: "Delay (minutes)" vs "Exact Date & Time" ────────
+    # Only one panel shows at a time. Researcher picks their preferred mode.
+    _mode = [0]   # 0 = minutes mode, 1 = datetime mode
+
+    minutes_panel = ft.Column([
+        ft.Text("Fire notification X minutes after you tap Save:",
+                size=12, color=TXT_GRAY),
+        minutes_f,
+        ft.Text("e.g. type 5 → notification fires in 5 minutes",
+                size=11, color=TXT_GRAY, italic=True),
+    ], spacing=6, visible=True)
+
+    datetime_panel = ft.Column([
+        ft.Text("Fire notification at an exact date and time:",
+                size=12, color=TXT_GRAY),
+        datetime_f,
+        ft.Text("Format: YYYY-MM-DD HH:MM:SS  (e.g. 2026-06-23 14:30:00)",
+                size=11, color=TXT_GRAY, italic=True),
+    ], spacing=6, visible=False)
+
+    btn_minutes  = ft.ElevatedButton(
+        "Delay (minutes)",
+        bgcolor=SEND_BLU, color=WHITE,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)))
+    btn_datetime = ft.ElevatedButton(
+        "Exact Date & Time",
+        bgcolor=INPUT_BG, color=TXT_MED,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)))
+
+    def set_mode_minutes(e):
+        _mode[0] = 0
+        minutes_panel.visible  = True
+        datetime_panel.visible = False
+        btn_minutes.bgcolor  = SEND_BLU;  btn_minutes.color  = WHITE
+        btn_datetime.bgcolor = INPUT_BG;  btn_datetime.color = TXT_MED
+        # Clear datetime so delay takes over on save
+        datetime_f.value = ""
+        page.update()
+
+    def set_mode_datetime(e):
+        _mode[0] = 1
+        minutes_panel.visible  = False
+        datetime_panel.visible = True
+        btn_minutes.bgcolor  = INPUT_BG;  btn_minutes.color  = TXT_MED
+        btn_datetime.bgcolor = SEND_BLU;  btn_datetime.color = WHITE
+        page.update()
+
+    btn_minutes.on_click  = set_mode_minutes
+    btn_datetime.on_click = set_mode_datetime
+
+    _timing_mode_btn_ref  = [btn_minutes, btn_datetime]
+    _timing_panel_ref     = [ft.Column([minutes_panel, datetime_panel],
+                                       spacing=8)]
+
+    def _get_init_prompt(phase):
+        saved = config.get_system_prompt(_init_sid, phase)
+        if saved and "Stay in character. Phase" not in saved:
+            return saved
+        return _init_preset.get(f"phase{phase}", "")
+
+    phase1_f = ft.TextField(
+        label="Phase 1 System Prompt (Rapport)",
+        multiline=True, min_lines=4, max_lines=8,
+        border_color=SEND_BLU, text_size=12,
+        value=_get_init_prompt(1))
+
+    phase2_f = ft.TextField(
+        label="Phase 2 System Prompt (Urgency)",
+        multiline=True, min_lines=4, max_lines=8,
+        border_color=SEND_BLU, text_size=12,
+        value=_get_init_prompt(2))
+
+    phase3_f = ft.TextField(
+        label="Phase 3 System Prompt (Demand)",
+        multiline=True, min_lines=4, max_lines=8,
+        border_color=SEND_BLU, text_size=12,
+        value=_get_init_prompt(3))
+
+    def update_prompts(e):
+        """
+        When researcher picks a scenario:
+        1. Load preset template immediately (always reliable)
+        2. Override with saved values from scenario file if they exist
+        3. Refresh hook preset dropdown options for the new scenario
+        """
+        sid = active_dd.value or ""
+
+        # Refresh hook preset dropdown for new scenario
+        new_presets = _HOOK_PRESETS.get(sid, [])
+        hook_preset_dd.options = [
+            ft.dropdown.Option(p[1], p[0]) for p in new_presets]
+        hook_preset_dd.value = None
+
+        # Start with presets (always available, never fails)
+        preset = _SCENARIO_PRESETS.get(sid, {})
+        hook_f.value   = preset.get("hook",   "")
+        phase1_f.value = preset.get("phase1", "")
+        phase2_f.value = preset.get("phase2", "")
+        phase3_f.value = preset.get("phase3", "")
+
+        # Override with saved scenario file values if they exist and differ
+        # from the generic fallback text
+        for s in config.get_scenarios():
+            if s["id"] == sid:
+                saved_hook = s.get("hook_message",
+                                   s.get("initial_hook_message",""))
+                if saved_hook:
+                    hook_f.value = saved_hook
+                break
+
+        for phase_num, field in [(1, phase1_f), (2, phase2_f), (3, phase3_f)]:
+            saved = config.get_system_prompt(sid, phase_num)
+            # Only use saved if it's not the generic auto-generated fallback
+            if saved and "Stay in character. Phase" not in saved:
+                field.value = saved
+
+        page.update()
+
+    # Populate fields immediately for the currently selected scenario
+    update_prompts(None)
+    active_dd.on_change = update_prompts
+
+    def save_scenario(e):
+        global _chat_engine, _notif_fired, _chat_unread
+        sid = active_dd.value or ""
+        config.set_active_scenario(sid)
+        # Ensure a scenario file exists for this ID
+        # If not, create one from the preset so future loads work
+        existing_ids = [s["id"] for s in config.get_scenarios()]
+        if sid not in existing_ids and sid in _SCENARIO_PRESETS:
+            preset = _SCENARIO_PRESETS[sid]
+            config.add_scenario({
+                "id": sid,
+                "enabled": True,
+                "threat_vector_classification": sid.replace("_"," ").title(),
+                "sender_identity": {
+                    "display_name": {
+                        "medicare_authority": "Medicare Services",
+                        "bank_fraud_alert":   "Fraud Prevention",
+                        "family_emergency":   "Alex",
+                        "prize_reward":       "Facebook Rewards",
+                    }.get(sid, "Unknown"),
+                    "initials_fallback": sid[0].upper(),
+                    "initials_color": "#0057A8",
+                },
+                "hook_message": preset["hook"],
+                "ai_system_prompts": {
+                    "phase_1": preset["phase1"],
+                    "phase_2": preset["phase2"],
+                    "phase_3": preset["phase3"],
+                },
+                "fallback_dialogue": {"phase_1":[],"phase_2":[],"phase_3":[]},
+                "phase_thresholds": {"rapport_turns":2,"urgency_turns":2},
+            })
+
+        # Save hook message
         if (hook_f.value or "").strip():
-            config.update_scenario_hook(active_dd.value or "", hook_f.value.strip())
-        # Reset chat engine so new scenario starts fresh with correct messages
-        _chat_engine = None
+            config.update_scenario_hook(sid, hook_f.value.strip())
+
+        # Save notification delay
+        try:
+            delay_secs = int((delay_f.value or "60").strip())
+            config.set("notification_delay_seconds", delay_secs)
+        except ValueError:
+            pass
+
+        # Save absolute datetime (validated format)
+        dt_val = (datetime_f.value or "").strip()
+        if dt_val:
+            try:
+                from datetime import datetime as _dt2
+                _dt2.strptime(dt_val, "%Y-%m-%d %H:%M:%S")
+                config.set("notification_datetime", dt_val)
+            except ValueError:
+                status.value = "⚠ Invalid datetime format. Use YYYY-MM-DD HH:MM:SS"
+                page.update()
+                return
+        else:
+            config.set("notification_datetime", "")
+
+        # Save system prompts back to scenario file
+        for s in config.get_scenarios():
+            if s["id"] == sid:
+                prompts = s.setdefault("ai_system_prompts", {})
+                if (phase1_f.value or "").strip():
+                    prompts["phase_1"] = phase1_f.value.strip()
+                if (phase2_f.value or "").strip():
+                    prompts["phase_2"] = phase2_f.value.strip()
+                if (phase3_f.value or "").strip():
+                    prompts["phase_3"] = phase3_f.value.strip()
+                config.save_scenario_file(s)
+                break
+
+        _chat_engine  = None
+        _notif_fired  = False
+        _chat_unread  = True   # keep Medicare bold after scenario change
+        # Re-schedule the notification timer
+        if _page_ref:
+            _page_ref.run_task(_schedule_notif, _page_ref)
         try:
             from session import clear_session
             clear_session()
         except Exception:
             pass
-        status_l.value = "✓ Saved. Chat reset for new scenario."
+        status.value = "✓ Scenario saved. Chat + notification reset."
         page.update()
 
-    def add_new(e):
-        if not (new_id_f.value or "").strip():
-            status_l.value = "Scenario ID required."
+    scenario_tab = ft.Column([
+        ft.Text("Scenario Configuration", size=15,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        active_dd,
+        ft.Divider(),
+        ft.Text("Message Content", size=13,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        hook_preset_dd,
+        hook_f,
+        ft.Divider(),
+        ft.Text("Notification Timing", size=13,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+
+        # ── Mode toggle ───────────────────────────────────────────────
+        ft.Text("Choose how to schedule the notification:",
+                size=12, color=TXT_GRAY),
+        ft.Row([
+            _timing_mode_btn_ref[0],
+            _timing_mode_btn_ref[1],
+        ], spacing=8),
+        ft.Container(height=4),
+        _timing_panel_ref[0],
+        ft.Divider(),
+        ft.Text("AI Conversation Prompts", size=13,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        ft.Text("Phase 1 = Rapport building | Phase 2 = Urgency | "
+                "Phase 3 = Asset demand",
+                size=11, color=TXT_GRAY),
+        phase1_f, phase2_f, phase3_f,
+        ft.ElevatedButton("Save All Changes", on_click=save_scenario,
+                          bgcolor=SEND_BLU, color=WHITE),
+        status,
+    ], spacing=10)
+
+    # ── TAB 2 — Attacker Profile Config ───────────────────────────────────────
+    scam_c = config.get_active_scam_contact() or {}
+
+    profile_name_f = ft.TextField(
+        label="Display Name",
+        value=scam_c.get("display_name","Medicare Services"),
+        border_color=SEND_BLU, text_size=13)
+
+    profile_initial_f = ft.TextField(
+        label="Avatar Initial (1 letter)",
+        value=scam_c.get("initials","M"),
+        border_color=SEND_BLU, text_size=13,
+        max_length=1)
+
+    profile_color_f = ft.TextField(
+        label="Avatar Color (hex e.g. #0057A8)",
+        value=scam_c.get("initials_color","#0057A8"),
+        border_color=SEND_BLU, text_size=13)
+
+    profile_online_cb = ft.Checkbox(
+        label="Show as Active/Online",
+        value=scam_c.get("is_active_online", True))
+
+    profile_preview_f = ft.TextField(
+        label="Preview Text in Chat List",
+        value=scam_c.get("preview_override",""),
+        border_color=SEND_BLU, text_size=13,
+        hint_text="Leave blank to auto-generate from hook message")
+
+    profile_img_f = ft.TextField(
+        label="Profile Picture URL (optional)",
+        value="",
+        border_color=SEND_BLU, text_size=13,
+        hint_text="https://... or leave blank to use initials avatar")
+
+    profile_status = ft.Text("", color=ft.Colors.GREEN_700, size=13)
+
+    def save_profile_config(e):
+        cid = scam_c.get("id","")
+        if not cid:
+            profile_status.value = "No active scam contact found."
+            page.update()
+            return
+        config.update_contact(cid, {
+            "display_name":    (profile_name_f.value or "").strip(),
+            "initials":        (profile_initial_f.value or "M").strip().upper()[:1],
+            "initials_color":  (profile_color_f.value or "#0084FF").strip(),
+            "is_active_online": profile_online_cb.value,
+            "preview_override": (profile_preview_f.value or "").strip(),
+        })
+        # Optionally download profile picture if URL provided
+        if (profile_img_f.value or "").strip().startswith("http"):
+            profile_status.value = "✓ Profile saved. Downloading avatar..."
+            page.update()
+            page.run_task(
+                config.download_avatar,
+                cid,
+                profile_img_f.value.strip())
+        else:
+            profile_status.value = "✓ Attacker profile saved."
+        page.update()
+
+    # Colour preview swatch
+    color_preview = ft.Container(
+        width=40, height=40,
+        bgcolor=scam_c.get("initials_color","#0057A8"),
+        border_radius=20)
+
+    def update_color_preview(e):
+        try:
+            color_preview.bgcolor = (profile_color_f.value or "#0084FF").strip()
+            page.update()
+        except Exception:
+            pass
+    profile_color_f.on_change = update_color_preview
+
+    attacker_tab = ft.Column([
+        ft.Text("Attacker Identity Profile", size=15,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        ft.Text("Changes the sender displayed to the participant.",
+                size=12, color=TXT_GRAY),
+        profile_name_f,
+        ft.Row([profile_initial_f, color_preview], spacing=12,
+               vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        profile_color_f,
+        profile_online_cb,
+        profile_preview_f,
+        profile_img_f,
+        ft.Text("If a URL is provided the app will download and cache "
+                "the image as the sender avatar.",
+                size=11, color=TXT_GRAY),
+        ft.ElevatedButton("Save Attacker Profile",
+                          on_click=save_profile_config,
+                          bgcolor=SEND_BLU, color=WHITE),
+        profile_status,
+        ft.Divider(),
+        ft.Text("Active Users Row", size=13,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        ft.Text("Edit who appears in the active bubbles at the top of the chat list.",
+                size=11, color=TXT_GRAY),
+        *_build_stories_editor(page, status),
+    ], spacing=10)
+
+    # ── TAB 3 — Add New Scenario ───────────────────────────────────────────────
+    new_id_f     = ft.TextField(label="Scenario ID (no spaces)",
+                                border_color=SEND_BLU, text_size=13)
+    new_sender_f = ft.TextField(label="Sender Display Name",
+                                border_color=SEND_BLU, text_size=13)
+    new_hook_f   = ft.TextField(label="Hook Message",
+                                border_color=SEND_BLU, text_size=13,
+                                multiline=True, min_lines=3)
+    new_delay_f  = ft.TextField(label="Notification Delay (seconds)",
+                                value="60", border_color=SEND_BLU,
+                                text_size=13,
+                                keyboard_type=ft.KeyboardType.NUMBER)
+    new_p1_f = ft.TextField(label="Phase 1 Prompt",
+                            border_color=SEND_BLU, text_size=12,
+                            multiline=True, min_lines=3)
+    new_status = ft.Text("", color=ft.Colors.GREEN_700, size=13)
+
+    def add_scenario(e):
+        sid = (new_id_f.value or "").strip().replace(" ","_")
+        if not sid:
+            new_status.value = "Scenario ID required."
             page.update()
             return
         config.add_scenario({
-            "id": new_id_f.value.strip(),
+            "id": sid,
+            "enabled": True,
             "threat_vector_classification": "Custom",
-            "sender_identity": {"display_name": (new_sender_f.value or "").strip(),
-                                "profile_picture_asset": ""},
-            "simulated_timestamp": "Just Now",
-            "initial_hook_message": (new_hook_f.value or "").strip(),
+            "sender_identity": {
+                "display_name": (new_sender_f.value or "").strip(),
+                "initials_fallback": (new_sender_f.value or "X")[:1].upper(),
+                "initials_color": "#0084FF",
+            },
+            "hook_message": (new_hook_f.value or "").strip(),
+            "simulation_timing": {
+                "simulated_timestamp": "Just Now",
+                "notification_delay_seconds": int(
+                    (new_delay_f.value or "60") or 60),
+            },
             "phase_thresholds": {"rapport_turns": 2, "urgency_turns": 2},
-            "evaluation_rule": "CUSTOM",
+            "ai_system_prompts": {
+                "phase_1": (new_p1_f.value or "").strip(),
+                "phase_2": "",
+                "phase_3": "",
+            },
+            "fallback_dialogue": {"phase_1":[],"phase_2":[],"phase_3":[]},
+            "sensitive_data_targets": [],
         })
-        status_l.value = f"✓ Scenario '{new_id_f.value.strip()}' added."
+        new_status.value = f"✓ Scenario '{sid}' added."
+        # Refresh dropdown
+        active_dd.options = [
+            ft.dropdown.Option(s["id"],s["id"])
+            for s in config.get_scenarios()]
         page.update()
 
-    # ---- data summary ----
-    summary_col = ft.Column([], spacing=4)
+    new_scenario_tab = ft.Column([
+        ft.Text("Add New Scenario", size=15,
+                weight=ft.FontWeight.BOLD, color=TXT_MED),
+        new_id_f, new_sender_f, new_hook_f, new_delay_f, new_p1_f,
+        ft.ElevatedButton("Create Scenario", on_click=add_scenario,
+                          bgcolor="#28A745", color=WHITE),
+        new_status,
+    ], spacing=10)
 
-    def _load_summary():
-        summary_col.controls.clear()
-        # Participant info
-        profile = load_profile()
-        pid   = profile.get("participant_id", "None")
-        fname = profile.get("first_name", "—")
-        lname = profile.get("last_name", "—")
-        summary_col.controls.append(
-            ft.Text(f"Participant: {fname} {lname}  (ID: {pid})",
-                    size=_scaled(13), color=FB_DARK, weight=ft.FontWeight.BOLD))
+    # ── Tab layout ─────────────────────────────────────────────────────────────
+    tabs = [data_tab, scenario_tab, attacker_tab, new_scenario_tab]
+    tab_labels = ["Data", "Scenario", "Profile", "New"]
+    tab_btns = []
 
-        # Telemetry stats
-        log_path = get_writable_path("telemetry_log.csv")
-        total_rows = 0
-        exposure_count = 0
-        event_counts = {}
-        last_rows = []
-        try:
-            if os.path.exists(log_path):
-                with open(log_path, "r", encoding="utf-8") as fh:
-                    reader = csv.DictReader(fh)
-                    for row in reader:
-                        total_rows += 1
-                        ev = row.get("Event_Type", "Unknown")
-                        event_counts[ev] = event_counts.get(ev, 0) + 1
-                        if row.get("Data_Exposure_Category", "None") != "None":
-                            exposure_count += 1
-                        last_rows.append(row)
-                last_rows = last_rows[-5:]  # keep last 5
-        except Exception as ex:
-            summary_col.controls.append(
-                ft.Text(f"Log read error: {ex}", size=11, color=ft.Colors.RED_600))
+    for i, lbl in enumerate(tab_labels):
+        is_active = i == 0
+        btn = ft.Container(
+            content=ft.Text(lbl, size=12, color=WHITE if is_active else TXT_GRAY,
+                            weight=ft.FontWeight.BOLD),
+            bgcolor=SEND_BLU if is_active else INPUT_BG,
+            border_radius=6,
+            padding=P(12,12,6,6),
+            expand=True,
+            alignment=ft.Alignment(0,0))
+        idx_capture = i
+        btn.on_click = (lambda e, idx=idx_capture: switch_tab(idx))
+        tab_btns.append(btn)
 
-        summary_col.controls.append(
-            ft.Text(f"Total logged events: {total_rows}",
-                    size=_scaled(13), color=FB_GRAY))
-        summary_col.controls.append(
-            ft.Text(f"Data exposure alerts: {exposure_count}",
-                    size=_scaled(13),
-                    color=ft.Colors.RED_600 if exposure_count > 0 else FB_GRAY))
-        for ev, count in event_counts.items():
-            summary_col.controls.append(
-                ft.Text(f"  {ev}: {count}", size=_scaled(12), color=FB_GRAY))
+    tab_bar = ft.Container(
+        content=ft.Row(tab_btns, spacing=4),
+        padding=P(12,12,8,8))
 
-        if last_rows:
-            summary_col.controls.append(ft.Divider())
-            summary_col.controls.append(
-                ft.Text("Last 5 events:", size=_scaled(12),
-                        weight=ft.FontWeight.BOLD, color=FB_DARK))
-            for row in last_rows:
-                ts  = row.get("Timestamp", "")[:19].replace("T", " ")
-                ev  = row.get("Event_Type", "")
-                lat = row.get("Latency_ms", "0")
-                exp = row.get("Data_Exposure_Category", "None")
-                line = f"{ts}  {ev}  {lat}ms"
-                if exp != "None":
-                    line += f"  ⚠ {exp}"
-                summary_col.controls.append(
-                    ft.Text(line, size=10, color=FB_GRAY, selectable=True))
+    body_container = ft.Container(
+        content=tabs[0],
+        expand=True,
+        padding=Pa(16))
+    tab_bodies[0] = body_container
 
-        page.update()
-
-    def refresh_summary(e):
-        _load_summary()
-        status_l.value = "✓ Summary refreshed."
-        page.update()
-
-    # ---- export to Downloads ----
-    def export_data(e):
-        log_path     = get_writable_path("telemetry_log.csv")
-        profile_path = get_writable_path("participant_profile.json")
-        session_path = get_writable_path("session_state.json")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pid = load_profile().get("participant_id", "UNKNOWN")
-
-        try:
-            downloads = "/storage/emulated/0/Download"
-            os.makedirs(downloads, exist_ok=True)
-            exported = []
-
-            if os.path.exists(log_path):
-                dest = os.path.join(downloads, f"spice_telemetry_{pid}_{timestamp}.csv")
-                shutil.copy2(log_path, dest)
-                exported.append("telemetry_log.csv")
-
-            if os.path.exists(profile_path):
-                dest = os.path.join(downloads, f"spice_profile_{pid}_{timestamp}.json")
-                shutil.copy2(profile_path, dest)
-                exported.append("participant_profile.json")
-
-            if os.path.exists(session_path):
-                dest = os.path.join(downloads, f"spice_session_{pid}_{timestamp}.json")
-                shutil.copy2(session_path, dest)
-                exported.append("session_state.json")
-
-            if exported:
-                status_l.value = f"✓ Exported to Downloads: {', '.join(exported)}"
-            else:
-                status_l.value = "No data files found to export yet."
-        except Exception as ex:
-            status_l.value = f"Export failed: {ex}"
-        page.update()
-
-    # ---- reset participant (for next participant) ----
-    def reset_participant(e):
-        try:
-            for fname in ["participant_profile.json", "telemetry_log.csv",
-                          "session_state.json", "offline_queue.json"]:
-                path = get_writable_path(fname)
-                if os.path.exists(path):
-                    os.remove(path)
-            global _participant_profile, _chat_engine, _interaction_count, _app_route
-            _participant_profile = {}
-            _chat_engine = None
-            _interaction_count = 0
-            _app_route = "boot"
-            status_l.value = "✓ Participant data cleared. Ready for next participant."
-            _load_summary()
-        except Exception as ex:
-            status_l.value = f"Reset failed: {ex}"
-        page.update()
-
-    # Load summary on open
-    _load_summary()
-
-    # ---- layout ----
     return ft.Column([
-        # Header
         ft.Container(
             content=ft.Row([
-                ft.Text("SPICE Admin Panel", size=_scaled(18),
-                        weight=ft.FontWeight.BOLD, color=FB_DARK),
-                ft.IconButton(ft.Icons.CLOSE, on_click=lambda e: on_close()),
+                ft.Text("SPICE Admin Panel", size=17,
+                        weight=ft.FontWeight.BOLD, color=TXT_MED),
+                ft.IconButton(ft.Icons.CLOSE, on_click=lambda e: close()),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=FB_LIGHT_GRAY,
-            padding=_pad(left=16, right=16, top=44, bottom=10)),
-
+            bgcolor=INPUT_BG,
+            padding=P(16,16,44,10)),
+        tab_bar,
+        ft.Divider(height=1, color=DIVIDER),
         ft.Container(
-            content=ft.Column([
-
-                # ── DATA SECTION ──────────────────────────────────────────
-                ft.Text("Participant Data", size=_scaled(15),
-                        weight=ft.FontWeight.BOLD, color=FB_DARK),
-                summary_col,
-                ft.Row([
-                    ft.ElevatedButton(
-                        "Refresh Summary",
-                        on_click=refresh_summary,
-                        bgcolor=FB_BLUE, color=FB_WHITE),
-                    ft.ElevatedButton(
-                        "Export to Downloads",
-                        on_click=export_data,
-                        bgcolor="#28A745", color=FB_WHITE),
-                ], spacing=8, wrap=True),
-                ft.ElevatedButton(
-                    "Reset for Next Participant",
-                    on_click=reset_participant,
-                    bgcolor="#DC3545", color=FB_WHITE),
-
-                ft.Divider(),
-
-                # ── SCENARIO CONFIG SECTION ───────────────────────────────
-                ft.Text("Scenario Configuration", size=_scaled(15),
-                        weight=ft.FontWeight.BOLD, color=FB_DARK),
-                active_dd, hook_f,
-                ft.ElevatedButton("Save Changes", on_click=save_active,
-                                  bgcolor=FB_BLUE, color=FB_WHITE),
-
-                ft.Divider(),
-
-                ft.Text("Add New Scenario", size=_scaled(14),
-                        weight=ft.FontWeight.BOLD, color=FB_DARK),
-                new_id_f, new_sender_f, new_hook_f,
-                ft.ElevatedButton("Add Scenario", on_click=add_new,
-                                  bgcolor=FB_BLUE, color=FB_WHITE),
-
-                status_l,
-
-            ], spacing=10),
-            padding=_pad_all(16), expand=True),
-
-    ], spacing=0, expand=True, scroll=ft.ScrollMode.AUTO)
+            content=ft.Column([body_container], expand=True,
+                              scroll=ft.ScrollMode.AUTO),
+            expand=True),
+    ], spacing=0, expand=True)
 
 
-# ===========================================================================
-# ROUTER
-# ===========================================================================
+def _go(page:ft.Page,route:str):
+    global _route; _route=route; _render(page)
 
-def _go(page: ft.Page, route: str) -> None:
-    global _app_route
-    _app_route = route
-    _render(page)
-
-
-def _render(page: ft.Page) -> None:
-    global _app_route
+def _render(page:ft.Page):
+    global _route
     page.controls.clear()
-    route = _app_route or "boot"
-
+    route=_route or "boot"
     try:
-        if route == "boot":
-            _boot(page)
-            return
-        elif route == "registration":
-            view = _build_registration(page, on_complete=lambda: _go(page, "feed"))
-        elif route == "feed":
-            view = _build_feed(page, on_notif_click=lambda: _go(page, "chat"))
-        elif route == "chat":
-            view = _build_chat(page, on_back=lambda: _go(page, "feed"))
-        elif route == "admin":
-            view = _build_admin(page, on_close=lambda: _go(page, "feed"))
-        else:
-            view = _error_view(f"Unknown route: {route}")
-
-        page.add(view)
-
-    except Exception as exc:
-        logger.exception("Render error on route '%s': %s", route, exc)
+        if   route=="boot":   _boot(page); return
+        elif route=="reg":    v=_build_reg(page,lambda: _go(page,"list"))
+        elif route=="list":   v=_build_list(page,
+                                            open_scam=lambda: _go(page,"chat"),
+                                            open_filler=lambda: _go(page,"filler"))
+        elif route=="password": v=_build_password(page,
+                                                  on_success=lambda: _go(page,"admin"),
+                                                  on_cancel=lambda: _go(page,"list"))
+        elif route=="chat":   v=_build_chat(page,back=lambda: _go(page,"list"))
+        elif route=="filler": v=_build_filler(page,back=lambda: _go(page,"list"))
+        elif route=="notifications": v=_build_notifications(page,
+                                                            back=lambda: _go(page,"list"))
+        elif route=="admin":  v=_build_admin(page,close=lambda: _go(page,"list"))
+        else:                 v=_error_view(f"Unknown: {route}")
+        page.add(v)
+    except Exception as ex:
+        logger.exception("Render error: %s",ex)
         page.controls.clear()
-        page.add(_error_view(str(exc)))
-
+        page.add(_error_view(str(ex)))
     page.update()
 
+async def _schedule_notif(page):
+    """
+    Waits for the configured delay or absolute datetime, then:
+    1. Sets _chat_unread=True so Medicare thread goes bold with blue dot
+    2. Re-renders the list so the change is visible immediately
+    3. Logs the event to telemetry
 
-def _boot(page: ft.Page) -> None:
-    global _participant_profile, _font_scale
-    if profile_exists():
-        _participant_profile = load_profile()
-        _font_scale = config.get("accessibility_font_scale", 1.0) or 1.0
-        _go(page, "feed")
+    Supports two modes (admin-configurable):
+      - Relative delay: notification_delay_seconds (default 60)
+      - Absolute datetime: notification_datetime "YYYY-MM-DD HH:MM:SS"
+    """
+    global _chat_unread, _notif_fired
+
+    from datetime import datetime as _dt
+    import math
+
+    logger.info("_schedule_notif started")
+
+    # ── Determine how long to wait ────────────────────────────────────
+    abs_dt_str = (config.get("notification_datetime") or "").strip()
+
+    if abs_dt_str:
+        # Absolute datetime mode
+        try:
+            # Accept multiple formats: 2026-06-23 09:23:00 or 9:23:00
+            _parsed = False
+            for _fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+                         "%Y-%m-%d %-H:%M:%S", "%Y-%m-%d %I:%M:%S"]:
+                try:
+                    target = _dt.strptime(abs_dt_str, _fmt)
+                    _parsed = True
+                    break
+                except Exception:
+                    continue
+            if not _parsed:
+                raise ValueError(f"Cannot parse datetime: {abs_dt_str}")
+            total_secs = (target - _dt.now()).total_seconds()
+            if total_secs < 0:
+                logger.info("Datetime %s already passed — firing immediately",
+                            abs_dt_str)
+                total_secs = 0
+            else:
+                logger.info("Absolute schedule: waiting %.0fs until %s",
+                            total_secs, abs_dt_str)
+        except Exception as ex:
+            logger.warning("Bad datetime '%s' (%s) — using delay instead",
+                           abs_dt_str, ex)
+            total_secs = float(config.get("notification_delay_seconds",60) or 60)
     else:
-        _go(page, "registration")
+        total_secs = float(config.get("notification_delay_seconds", 60) or 60)
+        logger.info("Relative delay: waiting %.0f seconds", total_secs)
 
+    # ── Sleep in small chunks so we can respond to config changes ────
+    # Check every 5 seconds whether the config changed while waiting
+    elapsed = 0.0
+    while elapsed < total_secs:
+        if _notif_fired:
+            logger.info("Notification already fired — exiting timer")
+            return
+        chunk = min(5.0, total_secs - elapsed)
+        await asyncio.sleep(chunk)
+        elapsed += chunk
 
-# ===========================================================================
-# MAIN
-# ===========================================================================
+        # Re-check absolute datetime in case admin changed it while waiting
+        new_abs = (config.get("notification_datetime") or "").strip()
+        if new_abs and new_abs != abs_dt_str:
+            logger.info("Datetime changed to %s — restarting timer", new_abs)
+            page.run_task(_schedule_notif, page)
+            return
 
-def main(page: ft.Page) -> None:
-    page.title      = "Social Connect+ Assistant"
-    page.bgcolor    = FB_BG
-    page.padding    = 0
-    page.spacing    = 0
-    page.theme_mode = ft.ThemeMode.LIGHT
+    # ── Fire ─────────────────────────────────────────────────────────
+    if _notif_fired:
+        return
+    _notif_fired = True
+    _chat_unread = True
+    _notif_fire_time = time.time()
 
-    # Push content below Android status bar
+    # Log for the Notifications feed screen
+    sc = _scenario()
+    si = sc.get("sender_identity", {})
+    sender = si.get("display_name", "Medicare Services")
+    hook   = sc.get("hook_message", sc.get("initial_hook_message",""))
+    preview = (hook[:50] + "…") if len(hook) > 50 else hook
+    _notif_log.append({
+        "sender":    sender,
+        "preview":   preview,
+        "fired_at":  _notif_fire_time,
+    })
+
+    logger.info("NOTIFICATION FIRED — %s thread now bold + unread", sender)
+
+    telemetry.log(
+        participant_id=_pid(),
+        scenario_type=_scenario().get("threat_vector_classification",""),
+        event_type="Push_Notification_Delivered")
+
+    # Re-render the list so Medicare appears bold with blue dot right now
     try:
-        if hasattr(page, "window") and hasattr(page.window, "status_bar_color"):
-            page.window.status_bar_color = FB_BLUE
-    except Exception:
-        pass
+        _render(page)
+    except Exception as ex:
+        logger.warning("Re-render failed after notification: %s", ex)
+
+
+def _boot(page:ft.Page):
+    global _profile, _notif_fired, _chat_unread, _chat_engine
+    # Reset notification state every time the app boots so the
+    # notification always fires fresh for each session
+    _notif_fired  = False
+    _chat_unread  = True   # Medicare always bold from first launch
+    _chat_engine  = None
+    if profile_exists():
+        _profile = load_profile()
+        _go(page, "list")
+        # Schedule the notification after login
+        page.run_task(_schedule_notif, page)
+    else:
+        _go(page, "reg")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════════
+async def _register_fcm_and_check_deeplink(page: ft.Page):
+    """Placeholder — FCM not active in this build. Safe no-op."""
+    pass
+
+
+def main(page:ft.Page):
+    global _page_ref
+    _page_ref = page
+    page.title="Social Connect+ Assistant"
+    page.bgcolor=BG; page.padding=0; page.spacing=0
+    page.theme_mode=ft.ThemeMode.LIGHT
+    try:
+        if hasattr(page,"window") and hasattr(page.window,"status_bar_color"):
+            page.window.status_bar_color=BLUE
+    except Exception: pass
 
     def on_lifecycle(e):
-        if e.data in ("pause", "inactive", "detach"):
-            if _chat_engine:
-                scenario = _active_scenario()
-                save_session(active_scenario_id=scenario["id"],
-                             conversation_history=_chat_engine.history,
-                             accumulated_latency_ms=0.0,
-                             interaction_count=_interaction_count,
-                             current_phase=_chat_engine.phase)
+        if e.data in ("pause","inactive","detach") and _chat_engine:
+            sc=_scenario()
+            save_session(active_scenario_id=sc.get("id",""),
+                         conversation_history=_chat_engine.history,
+                         accumulated_latency_ms=0.0,
+                         interaction_count=_interactions,
+                         current_phase=_chat_engine.phase)
+    page.on_app_lifecycle_state_change=on_lifecycle
 
-    page.on_app_lifecycle_state_change = on_lifecycle
-
-    async def _queue_flush_loop():
-        import asyncio
+    async def _queue_loop():
         while True:
             await asyncio.sleep(30)
-            depth = get_queue_depth()
-            if depth > 0:
-                flushed = await flush_queue(telemetry)
-                if flushed:
-                    logger.info("Flushed %d queued events.", flushed)
+            if get_queue_depth()>0:
+                await flush_queue(telemetry)
+    page.run_task(_queue_loop)
 
-    page.run_task(_queue_flush_loop)
+    # Register FCM token and check for deep-link launch
+    page.run_task(_register_fcm_and_check_deeplink, page)
+
+    # Notification is scheduled after login — see _boot() and _schedule_notif()
+
+    # Note: POST_NOTIFICATIONS runtime permission is declared in pyproject.toml
+    # and handled at the OS level on Android 13+. No runtime API call needed
+    # in Flet 0.85.3 — the manifest declaration is sufficient.
+
     _render(page)
-
 
 if __name__ == "__main__":
     ft.app(target=main)

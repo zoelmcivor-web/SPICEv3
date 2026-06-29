@@ -181,7 +181,12 @@ class ChatEngine:
             self.phase = 3
 
     def _system_prompt(self) -> str:
-        scenario_id = self.scenario.get("id", "family_impersonation")
+        scenario_id = self.scenario.get("id", "family_emergency")
+        # First try the scenario file's own prompts
+        prompt = config.get_system_prompt(scenario_id, self.phase)
+        if prompt and not prompt.startswith("You are roleplaying as"):
+            return prompt
+        # Fall back to hardcoded prompts for legacy scenarios
         prompts = _PROMPTS_BY_SCENARIO.get(scenario_id, _FAMILY_PROMPTS)
         return prompts.get(self.phase, prompts[1])
 
@@ -253,12 +258,20 @@ class ChatEngine:
         return self._fallback_reply()
 
     def _fallback_reply(self) -> str:
-        """Phase-aware fallback so even without API the conversation feels natural."""
-        scenario_id = self.scenario.get("id", "family_impersonation")
+        """Phase-aware fallback — reads from scenario file first, then hardcoded."""
+        scenario_id = self.scenario.get("id", "family_emergency")
+        # Try scenario file fallbacks first
+        options = config.get_fallback_responses(scenario_id, self.phase)
+        if options and options != ["Please reply as soon as possible."]:
+            return random.choice(options)
+        # Fall back to hardcoded legacy fallbacks
         phase_fallbacks = _FALLBACKS_BY_SCENARIO.get(
-            scenario_id, _FALLBACKS_BY_SCENARIO["family_impersonation"]
+            scenario_id, _FALLBACKS_BY_SCENARIO.get(
+                "family_impersonation",
+                {1: ["Please reply.", "Are you there?"], 2: ["I need help."], 3: ["Please send the money."]}
+            )
         )
-        options = phase_fallbacks.get(self.phase, phase_fallbacks[1])
+        options = phase_fallbacks.get(self.phase, ["Please reply as soon as possible."])
         return random.choice(options)
 
     def export_state(self) -> dict:

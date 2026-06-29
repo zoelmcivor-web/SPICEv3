@@ -1,8 +1,8 @@
 {
   "app_name": "Social Connect+ Assistant",
   "cover_story_tagline": "30-day mobile engagement and user experience layout evaluation",
-  "admin_gesture_tap_count": 7,
-  "active_scenario": "family_impersonation",
+  "admin_gesture_tap_count": 5,
+  "active_scenario": "medicare_authority",
   "ai_model": "claude-sonnet-4-6",
   "ai_max_tokens": 400,
   "fallback_timeout_seconds": 8,
@@ -20,7 +20,7 @@
       "The tow truck driver is getting impatient. What should I do?"
     ],
     "bank_impersonation": [
-      "This is urgent — your account access window closes in 10 minutes.",
+      "This is urgent \u2014 your account access window closes in 10 minutes.",
       "Please reply immediately to prevent your account from being frozen.",
       "Our security team is standing by. One quick reply unlocks your account.",
       "Verification is almost complete. Just confirm the last few digits."
@@ -31,5 +31,7 @@
       "This is a time-sensitive government notice. Please reply now.",
       "We need your confirmation to process your case today."
     ]
-  }
+  },
+  "notification_delay_seconds": 30,
+  "notification_datetime": ""
 }
