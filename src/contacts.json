@@ -1,0 +1,287 @@
+{
+  "_schema_version": "2.0",
+  "_description": "Configurable contact list for SPICE Messenger simulation. Researchers control every contact that appears in the chat list. Set 'scenario_id' to link a contact to a live scam scenario, or leave empty for a passive filler contact with pre-written conversation.",
+  "contacts": [
+    {
+      "id": "contact_alex",
+      "display_name": "Medicare Services",
+      "initials": "M",
+      "initials_color": "#0057A8",
+      "profile_picture_url": "",
+      "is_active_online": true,
+      "list_position": 1,
+      "scenario_id": "medicare_authority",
+      "preview_override": "MEDICARE NOTICE: Your health coverage...",
+      "timestamp": "Just Now",
+      "is_unread": true,
+      "filler_conversation": []
+    },
+    {
+      "id": "contact_mom",
+      "display_name": "Mom",
+      "initials": "M",
+      "initials_color": "#E91E8C",
+      "profile_picture_url": "",
+      "is_active_online": true,
+      "list_position": 2,
+      "scenario_id": "",
+      "preview_override": "You: Sounds good! See you Sunday \ud83d\ude0a",
+      "timestamp": "2h",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "user",
+          "content": "Hey mom, are we still on for Sunday?"
+        },
+        {
+          "role": "assistant",
+          "content": "Of course! I'm making your favorite. Does 2pm work?"
+        },
+        {
+          "role": "user",
+          "content": "Perfect, I'll bring dessert \ud83d\ude0a"
+        },
+        {
+          "role": "assistant",
+          "content": "Sounds good! See you Sunday \ud83d\ude0a"
+        }
+      ]
+    },
+    {
+      "id": "contact_sarah",
+      "display_name": "Sarah",
+      "initials": "S",
+      "initials_color": "#9C27B0",
+      "profile_picture_url": "",
+      "is_active_online": true,
+      "list_position": 3,
+      "scenario_id": "",
+      "preview_override": "Did you see the game last night?",
+      "timestamp": "5h",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "assistant",
+          "content": "Did you see the game last night? That ending was unbelievable!"
+        },
+        {
+          "role": "user",
+          "content": "I know! I couldn't believe it"
+        },
+        {
+          "role": "assistant",
+          "content": "We should watch the next one together. I'll make popcorn \ud83c\udf7f"
+        },
+        {
+          "role": "user",
+          "content": "Deal! Just let me know when"
+        },
+        {
+          "role": "assistant",
+          "content": "Will do! Talk soon \ud83d\ude0a"
+        }
+      ]
+    },
+    {
+      "id": "contact_james",
+      "display_name": "James",
+      "initials": "J",
+      "initials_color": "#2196F3",
+      "profile_picture_url": "",
+      "is_active_online": false,
+      "list_position": 4,
+      "scenario_id": "",
+      "preview_override": "You: Let me know what you think",
+      "timestamp": "Yesterday",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "user",
+          "content": "Hey James, did you get a chance to look at those photos I sent?"
+        },
+        {
+          "role": "assistant",
+          "content": "Just looking at them now, they look great!"
+        },
+        {
+          "role": "user",
+          "content": "Let me know what you think"
+        },
+        {
+          "role": "assistant",
+          "content": "Will do, give me a few minutes"
+        }
+      ]
+    },
+    {
+      "id": "contact_linda",
+      "display_name": "Linda",
+      "initials": "L",
+      "initials_color": "#4CAF50",
+      "profile_picture_url": "",
+      "is_active_online": true,
+      "list_position": 5,
+      "scenario_id": "",
+      "preview_override": "Photo",
+      "timestamp": "Mon",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "assistant",
+          "content": "Look what I found at the antique shop today! \ud83d\udcf7"
+        },
+        {
+          "role": "user",
+          "content": "Oh wow that's beautiful! Where was this?"
+        },
+        {
+          "role": "assistant",
+          "content": "The little shop on Main Street, they have so many treasures"
+        },
+        {
+          "role": "user",
+          "content": "I'll have to check it out this weekend"
+        },
+        {
+          "role": "assistant",
+          "content": "You should! Tell them Linda sent you \ud83d\ude04"
+        }
+      ]
+    },
+    {
+      "id": "contact_robert",
+      "display_name": "Robert",
+      "initials": "R",
+      "initials_color": "#FF5722",
+      "profile_picture_url": "",
+      "is_active_online": false,
+      "list_position": 6,
+      "scenario_id": "",
+      "preview_override": "You: \ud83d\udc4d",
+      "timestamp": "Sun",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "assistant",
+          "content": "Hey, did you end up finding a plumber?"
+        },
+        {
+          "role": "user",
+          "content": "Yes finally! Guy came yesterday and fixed everything"
+        },
+        {
+          "role": "assistant",
+          "content": "Oh great, that was a long time coming"
+        },
+        {
+          "role": "user",
+          "content": "\ud83d\udc4d"
+        },
+        {
+          "role": "assistant",
+          "content": "Let me know if you need his number for anything else"
+        }
+      ]
+    },
+    {
+      "id": "contact_carol",
+      "display_name": "Carol",
+      "initials": "C",
+      "initials_color": "#795548",
+      "profile_picture_url": "",
+      "is_active_online": true,
+      "list_position": 7,
+      "scenario_id": "",
+      "preview_override": "Call me when you get a chance",
+      "timestamp": "Sat",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "assistant",
+          "content": "Hey, call me when you get a chance. Nothing urgent just want to catch up!"
+        },
+        {
+          "role": "user",
+          "content": "Will do, I'll call after dinner tonight"
+        },
+        {
+          "role": "assistant",
+          "content": "Perfect, talk to you then!"
+        }
+      ]
+    },
+    {
+      "id": "contact_david",
+      "display_name": "David",
+      "initials": "D",
+      "initials_color": "#607D8B",
+      "profile_picture_url": "",
+      "is_active_online": false,
+      "list_position": 8,
+      "scenario_id": "",
+      "preview_override": "You: Okay sounds good \ud83d\udc4d",
+      "timestamp": "Fri",
+      "is_unread": false,
+      "filler_conversation": [
+        {
+          "role": "assistant",
+          "content": "Are you coming to the neighborhood meeting Thursday?"
+        },
+        {
+          "role": "user",
+          "content": "What time does it start?"
+        },
+        {
+          "role": "assistant",
+          "content": "7pm at the community center"
+        },
+        {
+          "role": "user",
+          "content": "Okay sounds good \ud83d\udc4d"
+        },
+        {
+          "role": "assistant",
+          "content": "Great, see you there!"
+        }
+      ]
+    }
+  ],
+  "stories_row": [
+    {
+      "name": "Kaylee",
+      "initials": "K",
+      "color": "#E91E63",
+      "is_active": true
+    },
+    {
+      "name": "Laurann",
+      "initials": "L",
+      "color": "#9C27B0",
+      "is_active": true
+    },
+    {
+      "name": "Jeanne",
+      "initials": "J",
+      "color": "#3F51B5",
+      "is_active": true
+    },
+    {
+      "name": "Sharon",
+      "initials": "S",
+      "color": "#009688",
+      "is_active": false
+    },
+    {
+      "name": "Mark",
+      "initials": "M",
+      "color": "#FF5722",
+      "is_active": true
+    },
+    {
+      "name": "Betty",
+      "initials": "B",
+      "color": "#795548",
+      "is_active": false
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 [project]
 name = "spice"
-version = "1.0.0"
+version = "2.0.0"
 description = "Software Platform for Investigating Cyber Experiences"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,4 +20,16 @@ permissions = [
     "android.permission.INTERNET",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.VIBRATE",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
 ]
+# API 26+ notification channel — required for lock screen delivery
+# This tells Flet's build system to set the target and compile SDK
+# high enough that the channel API is available
+min_sdk_version = 26
+target_sdk_version = 34
+compile_sdk_version = 34
+
+# Splash + theme
+[tool.flet.android.meta_data]
+"com.google.android.gms.version" = "@integer/google_play_services_version"

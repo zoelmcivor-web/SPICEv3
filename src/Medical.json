@@ -1,0 +1,58 @@
+{
+  "_schema_version": "2.0",
+  "_description": "Government/Authority Impersonation \u2014 Medicare benefit suspension threat",
+  "id": "medicare_authority",
+  "enabled": true,
+  "threat_vector_classification": "Authority_Threat",
+  "evaluation_rule": "GOVERNMENT_IDENTITY_COMPROMISE",
+  "sender_identity": {
+    "display_name": "Medicare Services",
+    "subtitle": "Benefits Office",
+    "profile_picture_url": "",
+    "profile_picture_local": "",
+    "initials_fallback": "M",
+    "initials_color": "#0057A8"
+  },
+  "simulation_timing": {
+    "simulated_timestamp": "Just Now",
+    "typing_delay_ms": 1200,
+    "read_receipt_delay_ms": 600
+  },
+  "hook_message": "Hi, this is Sarah from Medicare Services. I need to speak with you urgently about your coverage \u2014 please respond as soon as you can.",
+  "phase_thresholds": {
+    "rapport_turns": 1,
+    "urgency_turns": 1
+  },
+  "sensitive_data_targets": [
+    "social_security_number",
+    "home_address",
+    "medicare_id",
+    "date_of_birth"
+  ],
+  "ai_system_prompts": {
+    "phase_1": "You are roleplaying as Sarah, a Medicare benefits representative contacting a senior citizen via Facebook Messenger. You are warm, professional, and concerned. You have noticed a critical issue with their account that requires immediate attention. Phase 1: Be personal and friendly. Use their name if you know it. Express genuine concern. Do NOT reveal the full problem yet \u2014 just establish that this is urgent and personal. Keep replies to 2-3 sentences. Sound like a real person, not an automated system. Never break character.",
+    "phase_2": "You are a Medicare benefits representative following up on an urgent account issue. The beneficiary has responded and their coverage is at risk. Phase 2: Explain the verification process. To maintain their benefits and prescription savings they must verify their identity. You need to confirm their Social Security Number on file and their current mailing address. Mention that processing takes a few minutes so they should respond quickly before the midnight cutoff. Be helpful-sounding but firm about the deadline.",
+    "phase_3": "You are a Medicare representative who must verify a beneficiary's identity to prevent benefit suspension tonight. Phase 3: Request their SSN and current address directly. Frame it as routine verification that takes 2 minutes. If they hesitate, remind them what benefits they will lose. If they provide partial information, ask for the rest. Stay in official, helpful-government-agent character throughout. Never break character."
+  },
+  "fallback_dialogue": {
+    "phase_1": [
+      "This is an official Medicare notice. Your benefits may be suspended tonight.",
+      "Action required to maintain your health coverage before midnight.",
+      "Your Medicare account requires immediate attention to avoid suspension.",
+      "Please respond now to keep your prescription plan active."
+    ],
+    "phase_2": [
+      "To keep your benefits active, we need to verify your address on file.",
+      "Your prescription coverage is at risk without immediate verification.",
+      "Please respond before midnight to avoid a coverage lapse.",
+      "This will only take 2 minutes and protects your full coverage."
+    ],
+    "phase_3": [
+      "We just need your Social Security Number and current address to complete verification.",
+      "This takes two minutes and protects your prescription and specialist coverage.",
+      "Without verification tonight, your benefits suspend at midnight.",
+      "Please provide your SSN and address so we can update your records now."
+    ]
+  },
+  "researcher_notes": "Government authority impersonation. Very fast phase transitions (1 turn each). Highest urgency framing. Targets SSN and address. Particularly effective with Medicare-age participants who rely on prescription coverage."
+}

@@ -1,0 +1,61 @@
+{
+  "_schema_version": "2.0",
+  "_description": "TEMPLATE — Copy this file, rename it, and fill in your scenario details. All fields marked REQUIRED must be filled. Fields marked OPTIONAL can be left as empty strings.",
+
+  "id": "your_scenario_id_here",
+  "enabled": false,
+  "threat_vector_classification": "Custom",
+  "evaluation_rule": "CUSTOM_ENGAGEMENT",
+
+  "sender_identity": {
+    "display_name": "REQUIRED — Display name shown in chat list and header",
+    "subtitle": "OPTIONAL — Shown under name in some views",
+    "profile_picture_url": "OPTIONAL — Full URL to an image. App will download and cache it.",
+    "profile_picture_local": "OPTIONAL — Filename of a local asset image",
+    "initials_fallback": "REQUIRED — Single letter shown in avatar circle if no image",
+    "initials_color": "REQUIRED — Hex color for avatar background e.g. #0084FF"
+  },
+
+  "simulation_timing": {
+    "simulated_timestamp": "REQUIRED — e.g. Just Now, 2 mins ago, 5h",
+    "typing_delay_ms": 1500,
+    "read_receipt_delay_ms": 800
+  },
+
+  "hook_message": "REQUIRED — The first message the participant sees when they open the chat.",
+
+  "phase_thresholds": {
+    "rapport_turns": 2,
+    "urgency_turns": 2
+  },
+
+  "sensitive_data_targets": [
+    "OPTIONAL — list data types you want flagged e.g. phone_number, bank_account, social_security_number, password, home_address, date_of_birth, credit_card, medicare_id, verification_code"
+  ],
+
+  "ai_system_prompts": {
+    "phase_1": "REQUIRED — Instructions for the AI during Phase 1 (rapport building). Be specific about the character, tone, and goal. Tell it what NOT to do yet.",
+    "phase_2": "REQUIRED — Instructions for Phase 2 (urgency introduction). Build on Phase 1 context.",
+    "phase_3": "REQUIRED — Instructions for Phase 3 (asset demand). Specify exactly what information to request."
+  },
+
+  "fallback_dialogue": {
+    "phase_1": [
+      "REQUIRED — At least 3 fallback responses for Phase 1 used when AI is unavailable.",
+      "Add more lines for more variety.",
+      "These should feel natural for the character."
+    ],
+    "phase_2": [
+      "REQUIRED — At least 3 fallback responses for Phase 2.",
+      "These should introduce urgency.",
+      "Keep them short and pressuring."
+    ],
+    "phase_3": [
+      "REQUIRED — At least 3 fallback responses for Phase 3.",
+      "These should directly request the target information.",
+      "Keep them urgent and in character."
+    ]
+  },
+
+  "researcher_notes": "OPTIONAL — Notes for the research team about this scenario. Who is it designed for? What does it test? Any special considerations?"
+}
