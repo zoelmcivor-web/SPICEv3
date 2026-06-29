@@ -18,7 +18,11 @@ add_executable(${BINARY_NAME} WIN32
 
 # Keep the target name stable for Flutter tooling, but set the output name.
 # OUTPUT_NAME controls the on-disk executable name (artifact).
+<<<<<<< HEAD
 set_target_properties(${BINARY_NAME} PROPERTIES OUTPUT_NAME "SPICEv3")
+=======
+set_target_properties(${BINARY_NAME} PROPERTIES OUTPUT_NAME "SPICEv2")
+>>>>>>> 1feaec0a7ae219ac19525d01c55ac076690eb60d
 
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.

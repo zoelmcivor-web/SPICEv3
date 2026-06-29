@@ -6,7 +6,11 @@
 
 * `spice` - project identifier (lowercase, no spaces, i.e. "snake_case") used for bundle IDs and package names.
 * `` - project description.
+<<<<<<< HEAD
 * `SPICEv3` - executable or bundle name on disk.
+=======
+* `SPICEv2` - executable or bundle name on disk.
+>>>>>>> 1feaec0a7ae219ac19525d01c55ac076690eb60d
 * `spice` - display name shown in window titles and about app dialogs.
 * `edu.vcu.vcoa.spice` - org name in reverse domain name notation, e.g. `com.mycompany.myproject`.
 * `Your Company` - the name of the company.

@@ -83,7 +83,11 @@ add_dependencies(${BINARY_NAME} flutter_assemble)
 # the default top-level location.
 set_target_properties(${BINARY_NAME}
   PROPERTIES
+<<<<<<< HEAD
   OUTPUT_NAME "SPICEv3"
+=======
+  OUTPUT_NAME "SPICEv2"
+>>>>>>> 1feaec0a7ae219ac19525d01c55ac076690eb60d
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/intermediates_do_not_run"
 )
 
